@@ -88,7 +88,7 @@ bool SpriteFactory::init()
 		if ( !m_pixmapSources.contains( tilesheet ) )
 		{
 			QPixmap pm;
-			loaded = pm.load( Config::getInstance().get( "gfxPath" ).toString() + "/" + tilesheet );
+			loaded = pm.load( Config::getInstance().get( "dataPath" ).toString() + "/tilesheet/" + tilesheet );
 			if ( !loaded )
 			{
 				loaded = pm.load( tilesheet );
@@ -1172,7 +1172,20 @@ void SpriteFactory::createSprites( QList<SpriteCreation> scl )
 		{
 			if ( sc.uID != m_sprites.size() )
 			{
-				qDebug() << "##" << sc.uID << m_sprites.size() << sc.itemSID << sc.materialSIDs;
+				if ( sc.uID < m_sprites.size() )
+				{
+					qWarning() << "## Loosing sprite " << sc.uID << m_sprites.size() << sc.itemSID << sc.materialSIDs;
+					continue;
+				}
+				else
+				{
+					qDebug() << "## Missing sprite before " << sc.uID << m_sprites.size() << sc.itemSID << sc.materialSIDs;
+					while ( sc.uID > m_sprites.size() )
+					{
+						// Sprite was probably lost due to a deleted definition, ID won't be reused
+						m_sprites.append( nullptr );
+					}
+				}
 			}
 
 			if ( sc.creatureID )
@@ -1200,7 +1213,10 @@ void SpriteFactory::createSprites( QList<SpriteCreation> scl )
 void SpriteFactory::addPixmapToPixelData( Sprite* sprite )
 {
 	QString season = GameState::seasonString;
-
+	if( season.isEmpty() )
+	{
+		season = "Spring";
+	}
 	if ( sprite->anim )
 	{
 		for ( int frame = 0; frame < 4; ++frame )

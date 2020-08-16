@@ -42,7 +42,7 @@
 
 //#include "../gui/strings.h"
 
-#include "../base/exprtk/exprtk.hpp"
+#include "../../3rdparty/exprtk/exprtk.hpp"
 #include "../gfx/sprite.h"
 #include "../gfx/spritefactory.h"
 
@@ -51,7 +51,7 @@
 typedef exprtk::symbol_table<double> symbol_table_t;
 typedef exprtk::expression<double> expression_t;
 typedef exprtk::parser<double> parser_t;
-typedef exprtk::parser_error::type error_t;
+typedef exprtk::parser_error::type _error_t;
 
 CanWork::CanWork( Position& pos, QString name, Gender gender, QString species ) :
 	Creature( pos, name, gender, species )
@@ -304,20 +304,27 @@ void CanWork::cleanUpJob( bool finished )
 	Inventory& inv = Global::inv();
 	if ( !claimedItems().empty() )
 	{
-		for ( auto item : claimedItems() )
+		for ( auto itemID : claimedItems() )
 		{
-			inv.setInJob( item, 0 );
-			if ( inv.isPickedUp( item ) && !inv.isConstructed( item ) )
+			inv.setInJob( itemID, 0 );
+			if ( inv.isPickedUp( itemID ) && !inv.isConstructedOrEquipped( itemID ) )
 			{
-				inv.putDownItem( item, m_position );
+				inv.putDownItem( itemID, m_position );
 			}
 		}
+	}
+	if( m_btBlackBoard.contains( "ClaimedUniformItem" ) )
+	{
+		auto itemID = m_btBlackBoard.value( "ClaimedUniformItem" ).toUInt();
+		inv.setInJob( itemID, 0 );
+		m_btBlackBoard.remove( "ClaimedUniformItem" );
+		m_btBlackBoard.remove( "ClaimedUniformItemSlot" );
 	}
 
 	for ( auto itemID : m_carriedItems )
 	{
 		Inventory& inv = Global::inv();
-		if ( inv.isPickedUp( itemID ) && !inv.isConstructed( itemID ) )
+		if ( inv.isPickedUp( itemID ) && !inv.isConstructedOrEquipped( itemID ) )
 		{
 			inv.putDownItem( itemID, m_position );
 		}
@@ -469,7 +476,7 @@ double CanWork::parseGain( QVariantMap gainMap )
 
 		for ( std::size_t i = 0; i < parser.error_count(); ++i )
 		{
-			const error_t error = parser.get_error( i );
+			const _error_t error = parser.get_error( i );
 			printf( "Error: %02d Position: %02d Type: [%s] Msg: %s Expr: %s\n", static_cast<int>( i ), static_cast<int>( error.token.position ), exprtk::parser_error::to_str( error.mode ).c_str(), error.diagnostic.c_str(), formula.c_str() );
 		}
 	}
@@ -537,6 +544,7 @@ bool CanWork::dropEquippedItem()
 		inv.putDownItem( equippedItem, m_position );
 		inv.gravity( m_position );
 		inv.setInJob( equippedItem, 0 );
+		inv.setConstructedOrEquipped( equippedItem, false );
 		m_equipment.rightHandHeld.itemID = 0;
 		m_equipment.rightHandHeld.item.clear();
 		m_equipment.rightHandHeld.materialID = 0;
@@ -957,7 +965,7 @@ bool CanWork::construct()
 		{
 			inv.setInJob( itemUID, 0 );
 
-			if ( inv.isConstructed( itemUID ) )
+			if ( inv.isConstructedOrEquipped( itemUID ) )
 			{
 				/*
 				if( Global::inv().isContainer( itemUID ) )

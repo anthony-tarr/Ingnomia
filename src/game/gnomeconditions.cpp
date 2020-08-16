@@ -24,7 +24,7 @@
 //#include "../base/navmesh.h"
 //#include "../base/position.h"
 
-//#include "../game/creaturemanager.h"
+#include "../game/creaturemanager.h"
 //#include "../game/farmingmanager.h"
 //#include "../game/world.h"
 //#include "../game/stockpile.h"
@@ -271,21 +271,24 @@ BT_RESULT Gnome::conditionIsCivilian( bool halt )
 
 BT_RESULT Gnome::conditionHasHuntTarget( bool halt )
 {
-	if( m_targets.size() )
-	{
-		return BT_RESULT::SUCCESS;
-	}
-
 	auto squad = Global::mil().getSquadForGnome( m_id );
 	if( squad )
 	{
 		for( const auto& prio : squad->priorities )
 		{
-			if( prio.attitude == MilAttitude::HUNT )
+			if ( prio.attitude == MilAttitude::HUNT )
 			{
-				m_targets.append( prio.huntTargets.toList() );
+				const auto& targetSet = Global::cm().animalsByType( prio.type );
+				for ( const auto& targetID : targetSet )
+				{
+					//!TODO Bucket targets by region cluster, so this can become amortized constant cost
+					if ( Global::cm().hasPathTo( m_position, targetID ) )
+					{
+						return BT_RESULT::SUCCESS;
+					}
+				}
 			}
 		}
 	}
-	return m_targets.isEmpty() ? BT_RESULT::FAILURE : BT_RESULT::SUCCESS;
+	return BT_RESULT::FAILURE;
 }

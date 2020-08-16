@@ -101,8 +101,8 @@ public:
 
 	bool isPickedUp( unsigned int id );
 
-	bool isConstructed( unsigned int id );
-	void setConstructed( unsigned int id, bool status );
+	bool isConstructedOrEquipped( unsigned int id );
+	void setConstructedOrEquipped( unsigned int id, bool status );
 
 	void putItemInContainer( unsigned int id, unsigned int container );
 	void removeItemFromContainer( unsigned int id );
@@ -141,11 +141,11 @@ public:
 	void setColor( unsigned int item, QString color );
 	unsigned int color( unsigned int item );
 
-	QList<unsigned int> itemsInContainer( unsigned int container );
+	const QSet<unsigned int>& itemsInContainer( unsigned int container );
 
 	int countItemsAtPos( Position& pos );
 
-	QMap<unsigned int, Item>& allItems()
+	QHash<unsigned int, Item>& allItems()
 	{
 		return m_items;
 	}
@@ -178,12 +178,14 @@ public:
 	bool itemsChanged();
 	void setItemsChanged();
 
+	QString itemGroup( unsigned int itemID );
+
 private:
 	int m_dimX;
 	int m_dimY;
 	int m_dimZ;
 
-	QMap<unsigned int, Item> m_items;
+	QHash<unsigned int, Item> m_items;
 
 	PositionHash m_positionHash;
 	QHash<QString, QHash<QString, QHash<unsigned int, Item*>>> m_hash;

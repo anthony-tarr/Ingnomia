@@ -92,7 +92,7 @@ public:
 
 	void assignWorkshop( unsigned int id );
 
-	const Equipment& equipment();
+	Equipment equipment();
 
 	QString rightHandItem();
 	QString rightHandAttackSkill();
@@ -102,6 +102,8 @@ public:
 	bool attack( DamageType dt, AnatomyHeight da, int skill, int strength, Position sourcePos, unsigned int attackerID );
 
 	void setAllowedCarryItems( bool bandages, bool food, bool drinks );
+
+	bool equipItem();
 
 protected:
 	float m_gainFromSleep = 0.035f;
@@ -165,7 +167,6 @@ protected:
 	BT_RESULT actionDropItem( bool halt );
 	BT_RESULT actionDropAllItems( bool halt );
 	BT_RESULT actionEquipTool( bool halt );
-	BT_RESULT actionEquipUniform( bool halt );
 	BT_RESULT actionCheckUniform( bool halt );
 	BT_RESULT actionCheckBandages( bool halt );
 	BT_RESULT actionUniformCleanUp( bool halt );

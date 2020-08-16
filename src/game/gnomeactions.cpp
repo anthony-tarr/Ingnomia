@@ -99,7 +99,7 @@ BT_RESULT Gnome::actionSleep( bool halt )
 	m_anatomy.heal();
 
 	unsigned int hour = qMin( 23, GameState::hour );
-	auto activity      = m_schedule[hour];
+	auto activity     = m_schedule[hour];
 
 	if ( newVal >= 100. && activity != ScheduleActivity::Sleep )
 	{
@@ -180,7 +180,7 @@ BT_RESULT Gnome::actionMove( bool halt )
 	if ( Global::debugMode )
 		log( "actionMove" );
 	//if ( Global::debugMode )
-		//qDebug() << "actionMove" << m_currentPath.size();
+	//qDebug() << "actionMove" << m_currentPath.size();
 
 	if ( halt )
 	{
@@ -209,7 +209,7 @@ BT_RESULT Gnome::actionMove( bool halt )
 			}
 		}
 
-		if ( m_aggroList.size() || m_targets.size() )
+		if ( m_currentAttackTarget )
 		{
 			if ( conditionTargetAdjacent( false ) == BT_RESULT::SUCCESS )
 			{
@@ -588,7 +588,7 @@ BT_RESULT Gnome::actionGetJob( bool halt )
 		jm.setJobBeingWorked( m_jobID, false );
 		m_job->setIsWorked( true );
 		m_job->setWorkedBy( m_id );
-		m_jobID = m_jobID;
+
 		log( "JobType " + m_job->type() );
 		m_btBlackBoard.insert( "JobType", m_job->type() );
 		m_currentAction = "job";
@@ -939,7 +939,6 @@ BT_RESULT Gnome::actionClaimItems( bool halt )
 						unsigned int item = inv.getClosestItem( m_job->pos(), true, itemSID, materialSID );
 						if ( item )
 						{
-							inv.setInJob( item, true );
 							addClaimedItem( item, m_job->id() );
 						}
 						else
@@ -1145,6 +1144,7 @@ BT_RESULT Gnome::actionEquipTool( bool halt )
 		if ( m_position == Global::inv().getItemPos( claimedTool ) )
 		{
 			Global::inv().pickUpItem( claimedTool );
+			Global::inv().setConstructedOrEquipped( claimedTool, true );
 			m_equipment.rightHandHeld.itemID     = claimedTool;
 			m_equipment.rightHandHeld.item       = Global::inv().itemSID( claimedTool );
 			m_equipment.rightHandHeld.materialID = Global::inv().materialUID( claimedTool );
@@ -1163,107 +1163,18 @@ BT_RESULT Gnome::actionEquipTool( bool halt )
 	return BT_RESULT::FAILURE;
 }
 
-BT_RESULT Gnome::actionEquipUniform( bool halt )
-{
-	if ( Global::debugMode )
-		log( "actionEquipUniform" );
-	Q_UNUSED( halt ); // action takes only one tick, halt has no effect
 
-	auto itemID = m_btBlackBoard.value( "ClaimedUniformItem" ).toUInt();
-
-	m_btBlackBoard.remove( "ClaimedUniformItem" );
-
-	QStringList conc;
-
-	if ( m_position == Global::inv().getItemPos( itemID ) )
-	{
-		Global::inv().pickUpItem( itemID );
-		Global::inv().setInJob( itemID, m_id );
-
-		QString slot = m_btBlackBoard.value( "ClaimedUniformItemSlot" ).toString();
-		m_btBlackBoard.remove( "ClaimedUniformItemSlot" );
-
-		QString itemSID          = Global::inv().itemSID( itemID );
-		unsigned int materialUID = Global::inv().materialUID( itemID );
-		QString materialSID      = Global::inv().materialSID( itemID );
-
-		auto part = Global::creaturePartLookUp.value( slot );
-
-		switch ( part )
-		{
-			case CP_ARMOR_HEAD:
-				m_equipment.head.itemID     = itemID;
-				m_equipment.head.item       = itemSID;
-				m_equipment.head.materialID = materialUID;
-				m_equipment.head.material   = materialSID;
-				break;
-			case CP_ARMOR_TORSO:
-				m_equipment.chest.itemID     = itemID;
-				m_equipment.chest.item       = itemSID;
-				m_equipment.chest.materialID = materialUID;
-				m_equipment.chest.material   = materialSID;
-				break;
-			case CP_ARMOR_ARM:
-				m_equipment.arm.itemID     = itemID;
-				m_equipment.arm.item       = itemSID;
-				m_equipment.arm.materialID = materialUID;
-				m_equipment.arm.material   = materialSID;
-				break;
-			case CP_ARMOR_HAND:
-				m_equipment.hand.itemID     = itemID;
-				m_equipment.hand.item       = itemSID;
-				m_equipment.hand.materialID = materialUID;
-				m_equipment.hand.material   = materialSID;
-				break;
-			case CP_ARMOR_LEG:
-				m_equipment.leg.itemID     = itemID;
-				m_equipment.leg.item       = itemSID;
-				m_equipment.leg.materialID = materialUID;
-				m_equipment.leg.material   = materialSID;
-				break;
-			case CP_ARMOR_FOOT:
-				m_equipment.foot.itemID     = itemID;
-				m_equipment.foot.item       = itemSID;
-				m_equipment.foot.materialID = materialUID;
-				m_equipment.foot.material   = materialSID;
-				break;
-			case CP_LEFT_HAND_HELD:
-				m_equipment.leftHandHeld.itemID     = itemID;
-				m_equipment.leftHandHeld.item       = itemSID;
-				m_equipment.leftHandHeld.materialID = materialUID;
-				m_equipment.leftHandHeld.material   = materialSID;
-				equipHand( itemID, "Left" );
-				break;
-			case CP_RIGHT_HAND_HELD:
-				m_equipment.rightHandHeld.itemID     = itemID;
-				m_equipment.rightHandHeld.item       = itemSID;
-				m_equipment.rightHandHeld.materialID = materialUID;
-				m_equipment.rightHandHeld.material   = materialSID;
-				equipHand( itemID, "Right" );
-				break;
-			case CP_BACK:
-				m_equipment.back.itemID     = itemID;
-				m_equipment.back.item       = itemSID;
-				m_equipment.back.materialID = materialUID;
-				m_equipment.back.material   = materialSID;
-				break;
-		}
-
-		updateSprite();
-
-		m_uniformWorn = true;
-
-		m_renderParamsChanged = true;
-		return BT_RESULT::SUCCESS;
-	}
-	return BT_RESULT::FAILURE;
-}
 
 bool Gnome::checkUniformItem( QString slot, Uniform* uniform, bool& dropped )
 {
+	if( m_jobID )
+	{
+		return false;
+	}
+
 	auto part = Global::creaturePartLookUp.value( slot );
 
-	QString item = uniform->parts[slot].item;
+	QString item     = uniform->parts[slot].item;
 	QString material = uniform->parts[slot].material;
 
 	QString wiSID         = "";
@@ -1350,16 +1261,21 @@ bool Gnome::checkUniformItem( QString slot, Uniform* uniform, bool& dropped )
 	{
 		if ( wiSID != item || ( ( wiMat != material ) && ( material != "any" ) ) )
 		{
-			qDebug() << "Drop item:" << wiMat << wiSID << " looking for:" << material << item;
+			log( "Drop item:" + wiMat + " " + wiSID + " looking for:" + material + " " + item );
 			//drop current item
 			dropped = true;
 			Global::inv().putDownItem( wornItem, m_position );
 			Global::inv().setInJob( wornItem, 0 );
+			Global::inv().setConstructedOrEquipped( wornItem, false );
 
 			if ( item == "none" || item.isEmpty() )
 			{
 				return true;
 			}
+		}
+		else
+		{
+			return false;
 		}
 	}
 
@@ -1370,12 +1286,36 @@ bool Gnome::checkUniformItem( QString slot, Uniform* uniform, bool& dropped )
 		if ( itemToGet )
 		{
 			auto pos = Global::inv().getItemPos( itemToGet );
-			Global::inv().setInJob( itemToGet, m_id );
+			
 			m_btBlackBoard.insert( "ClaimedUniformItem", itemToGet );
 			m_btBlackBoard.insert( "ClaimedUniformItemSlot", slot );
-			setCurrentTarget( pos );
+			
+			auto& jm = Global::jm();
+			
+			m_jobID = jm.addJob( "EquipItem", pos, 0, true );
+			
+			if ( m_jobID != 0 )
+			{
+				m_jobChanged = true;
+				m_job        = jm.getJob( m_jobID );
+				if( m_job )
+				{
+					Global::inv().setInJob( itemToGet, m_jobID );
+					//no change to jobsprite
+					jm.setJobBeingWorked( m_jobID, true );
+					m_job->setIsWorked( true );
+					m_job->setWorkedBy( m_id );
+					m_job->setDestroyOnAbort( true );
+					log( "JobType " + m_job->type() );
+					m_btBlackBoard.insert( "JobType", m_job->type() );
+					m_currentAction = "job";
 
-			return true;
+					m_workPositionQueue = PriorityQueue<Position, int>();
+					m_workPositionQueue.put( pos, m_position.distSquare( pos ) );
+
+					return true;
+				}
+			}
 		}
 	}
 
@@ -2162,7 +2102,7 @@ BT_RESULT Gnome::actionAttackTarget( bool halt )
 	if ( Global::debugMode )
 		log( "actionAttackTarget" );
 	Creature* creature = Global::cm().creature( m_currentAttackTarget );
-	
+
 	if ( creature && !creature->isDead() )
 	{
 		m_facing = getFacing( m_position, creature->getPos() );
@@ -2343,46 +2283,107 @@ BT_RESULT Gnome::actionGetTarget( bool halt )
 {
 	if ( Global::debugMode )
 		log( "actionGetTarget" );
-	
-	if ( m_aggroList.size() )
-	{
-		unsigned int targetID = m_aggroList.first().id;
-		Creature* creature    = Global::cm().creature( targetID );
 
-		if ( creature && !creature->isDead() )
+	// Unset current attack target if invalidated
+	if (m_currentAttackTarget)
+	{
+		const Creature* creature = Global::cm().creature( m_currentAttackTarget );
+		if (!creature || creature->isDead() || !Global::cm().hasPathTo(m_position, creature->id()))
 		{
-			m_currentAttackTarget = targetID;
-			setCurrentTarget( creature->getPos() );
+			m_currentAttackTarget = 0;
+			m_thoughtBubble       = "";
+		}
+	}
+
+	if ( !m_currentAttackTarget )
+	{
+		const Creature* bestCandidate = nullptr;
+		unsigned int bestDistance     = std::numeric_limits<unsigned int>::max();
+
+		const Squad* squad = Global::mil().getSquadForGnome( m_id );
+		if ( squad )
+		{
+			// Search for targets already attacked by squad mates first
+			for ( const auto& gnomeID : squad->gnomes )
+			{
+				const Gnome* gnome = Global::gm().gnome( gnomeID );
+				if ( gnome && gnome->m_currentAttackTarget )
+				{
+					const Creature* creature = Global::cm().creature( gnome->m_currentAttackTarget );
+					if ( creature && Global::cm().hasPathTo( m_position, creature->id() ) )
+					{
+						const auto dist = m_position.distSquare( creature->getPos() );
+						bestDistance    = dist;
+						bestCandidate   = creature;
+						// Any legal match is a good hit
+						break;
+					}
+				}
+			}
+			if ( !bestCandidate )
+			{
+				// Next search for hunting targets, anything we could reach
+				for ( const auto& prio : squad->priorities )
+				{
+					if ( prio.attitude == MilAttitude::HUNT )
+					{
+						const auto& targetSet = Global::cm().animalsByType( prio.type );
+						//!TODO Sort huntTargets into buckets by regionm so hasPathTo will never fail
+						for ( const auto& targetID : targetSet )
+						{
+							const Creature* creature = Global::cm().creature( targetID );
+							if ( creature && !creature->isDead() && Global::cm().hasPathTo( m_position, targetID ) )
+							{
+								const auto dist = m_position.distSquare( creature->getPos() );
+								if ( dist < bestDistance )
+								{
+									bestDistance  = dist;
+									bestCandidate = creature;
+								}
+							}
+						}
+						// Got the closest target
+						if ( bestCandidate )
+						{
+							break;
+						}
+					}
+				}
+			}
+		}
+		//!TODO Loop again to check for "attack on sight" target class
+
+		if ( !bestCandidate )
+		{
+			while ( m_aggroList.size() )
+			{
+				unsigned int targetID = m_aggroList.first().id;
+				Creature* creature    = Global::cm().creature( targetID );
+
+				//!TODO Check if creature isn't in "flee" category
+				if ( creature && !creature->isDead() && Global::cm().hasPathTo( m_position, targetID ) )
+				{
+					const auto dist = m_position.distSquare( creature->getPos() );
+					bestDistance    = dist;
+					bestCandidate   = creature;
+					break;
+				}
+				else
+				{
+					m_aggroList.pop_front();
+				}
+			}
+		}
+
+		if ( bestCandidate )
+		{
+			m_currentAttackTarget = bestCandidate->id();
+			setCurrentTarget( bestCandidate->getPos() );
+			m_thoughtBubble = "Combat";
 			return BT_RESULT::SUCCESS;
 		}
-		else
-		{
-			m_aggroList.removeFirst();
-			return BT_RESULT::FAILURE;
-		}
 	}
-	else
-	{
-		if ( m_targets.size() )
-		{
-			unsigned int targetID = m_targets.first();
-			Creature* creature = Global::cm().creature( targetID );
-			
-			if ( creature && !creature->isDead() )
-			{
-				m_currentAttackTarget = targetID;
-				setCurrentTarget( creature->getPos() );
-				if ( Global::debugMode )
-					qDebug() << "Target is at: " << creature->getPos().toString();
-				return BT_RESULT::SUCCESS;
-			}
-			else
-			{
-				m_targets.removeFirst();
-			}
-		}
-	}
-	return BT_RESULT::FAILURE;
+	return m_currentAttackTarget ? BT_RESULT::SUCCESS : BT_RESULT::FAILURE;
 }
 
 BT_RESULT Gnome::actionDoMission( bool halt )
@@ -2555,4 +2556,62 @@ BT_RESULT Gnome::actionReturnFromMission( bool halt )
 	m_nextCheckTick = 0;
 
 	return BT_RESULT::SUCCESS;
+}
+
+bool Gnome::equipItem()
+{
+	if ( Global::debugMode )
+		log( "actionEquipUniform" );
+
+	auto itemID = m_btBlackBoard.value( "ClaimedUniformItem" ).toUInt();
+	m_btBlackBoard.remove( "ClaimedUniformItem" );
+
+	QStringList conc;
+
+	if ( m_position == Global::inv().getItemPos( itemID ) )
+	{
+		Global::inv().pickUpItem( itemID );
+		Global::inv().setInJob( itemID, 0 );
+		Global::inv().setConstructedOrEquipped( itemID, true );
+
+		QString slot = m_btBlackBoard.value( "ClaimedUniformItemSlot" ).toString();
+		m_btBlackBoard.remove( "ClaimedUniformItemSlot" );
+
+		QString itemSID          = Global::inv().itemSID( itemID );
+		unsigned int materialUID = Global::inv().materialUID( itemID );
+		QString materialSID      = Global::inv().materialSID( itemID );
+
+		auto part = Global::creaturePartLookUp.value( slot );
+
+		auto& itemSlot = m_equipment.getSlot( part );
+		if ( itemSlot.itemID )
+		{
+			qWarning() << "Trying to equip into occupied slot!";
+			Global::inv().putDownItem( itemSlot.itemID, m_position );
+			Global::inv().setInJob( itemSlot.itemID, 0 );
+			Global::inv().setConstructedOrEquipped( itemSlot.itemID, false );
+		}
+		itemSlot.itemID = itemID;
+		itemSlot.item   = itemSID;
+		itemSlot.materialID = materialUID;
+		itemSlot.material   = materialSID;
+		if (part == CP_LEFT_HAND_HELD)
+		{
+			equipHand( itemID, "Left" );
+		}
+		else if (part == CP_RIGHT_HAND_HELD )
+		{
+			equipHand( itemID, "Right" );
+		}
+
+		updateSprite();
+
+		m_uniformWorn = true;
+
+		m_renderParamsChanged = true;
+		return true;
+	}
+
+
+	return false;
 }

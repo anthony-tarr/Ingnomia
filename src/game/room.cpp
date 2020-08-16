@@ -130,7 +130,7 @@ bool Room::removeTile( Position& pos )
 	if ( rt->furnitureID != 0 )
 	{
 		itemID = rt->furnitureID;
-		inv.setConstructed( rt->furnitureID, false );
+		inv.setConstructedOrEquipped( rt->furnitureID, false );
 	}
 	// remove tile and remove tile flag
 	m_fields.remove( pos.toInt() );
@@ -168,7 +168,7 @@ void Room::addFurniture( unsigned int itemUID, Position pos )
 		m_fields[pos.toInt()]->furnitureID = itemUID;
 		if ( itemUID )
 		{
-			Global::inv().setConstructed( itemUID, true );
+			Global::inv().setConstructedOrEquipped( itemUID, true );
 			Global::inv().setItemPos( itemUID, pos );
 		}
 		if ( Global::inv().itemSID( itemUID ) == "AlarmBell" )
@@ -213,8 +213,8 @@ bool Room::checkRoofed()
 	{
 		Position pos = tile->pos;
 		pos.z        = pos.z + 1;
-		Tile& tile   = Global::w().getTile( pos );
-		if ( !( tile.floorType & FloorType::FT_SOLIDFLOOR ) )
+		Tile& _tile   = Global::w().getTile( pos );
+		if ( !( _tile.floorType & FloorType::FT_SOLIDFLOOR ) )
 		{
 			roofed = false;
 			break;

@@ -57,6 +57,8 @@
 #include <QSaveFile>
 #include <QStandardPaths>
 
+#include <unordered_set>
+
 int IO::version = 0;
 
 IO::IO( QObject* parent ) :
@@ -143,6 +145,27 @@ bool IO::createFolders()
 	{
 		QDir().mkdir( tmpFolder );
 	}
+
+	QString exePath = QCoreApplication::applicationDirPath();
+
+	if ( !QFile::exists( folder + "settings/profs.json" ) && QFile::exists( exePath + "/content/JSON/profs.json" ) )
+	{
+		QFile::copy( exePath + "/content/JSON/profs.json", folder + "settings/profs.json" );
+	}
+	if ( !QFile::exists( folder + "settings/config.json" ) && QFile::exists( exePath + "/content/JSON/config.json" ) )
+	{
+		QFile::copy( exePath + "/content/JSON/config.json", folder + "settings/config.json" );
+	}
+	if ( !QFile::exists( folder + "settings/newgame.json" ) && QFile::exists( exePath + "/content/JSON/newgame.json" ) )
+	{
+		QFile::copy( exePath + "/content/JSON/newgame.json", folder + "settings/newgame.json" );
+	}
+	/*
+	if ( !QFile::exists( folder + "settings/keybindings.json" ) && QFile::exists( exePath + "/content/JSON/keybindings.json" ) )
+	{
+		QFile::copy( exePath + "/content/JSON/keybindings.json", folder + "settings/keybindings.json" );
+	}
+	*/
 
 	folder = QStandardPaths::writableLocation( QStandardPaths::DocumentsLocation ) + "/My Games/Ingnomia/save/";
 
@@ -264,6 +287,7 @@ bool IO::load( QString folder )
 	loadFile( folder + "game.json", jd );
 	IO::loadGame( jd );
 
+	Global::gm().init();
 	Global::mil().init();
 
 	PathFinder::getInstance().init();
@@ -320,10 +344,73 @@ bool IO::load( QString folder )
 	loadFile( folder + "config.json", jd );
 	IO::loadConfig( jd );
 
-	
+	sanitize();
 
 	qDebug() << "loading game took: " + QString::number( timer.elapsed() ) + " ms";
 	return true;
+}
+
+void IO::sanitize()
+{
+	// Migration for 0.7.5 games where gnomes had stored their own ID in job field of items
+	{
+		std::unordered_set<unsigned int> legalJobs;
+		for ( const auto& job : Global::jm().allJobs() )
+		{
+			legalJobs.emplace( job.id() );
+		}
+
+		std::unordered_set<unsigned int> carriedItems;
+		std::unordered_set<unsigned int> wornItems;
+		for ( const auto& gnome : Global::gm().gnomes() )
+		{
+			{
+				const auto& c = gnome->inventoryItems();
+				carriedItems.insert( c.cbegin(), c.cend() );
+			}
+			{
+				const auto& c = gnome->carriedItems();
+				carriedItems.insert( c.cbegin(), c.cend() );
+			}
+			for ( const auto& claim : gnome->claimedItems() )
+			{
+				// Special exemption in case this is legacy type reservation
+				legalJobs.emplace( gnome->id() );
+			}
+
+			for ( const auto& itemID : gnome->equipment().wornItems() )
+			{
+				wornItems.insert( itemID );
+			}
+		}
+
+		for ( auto& item : Global::inv().allItems() )
+		{
+			const auto job = item.isInJob();
+			if ( job && !legalJobs.count( job ) )
+			{
+				item.setInJob( 0 );
+				qWarning() << "item " + QString::number( item.id() ) + " " + item.itemSID() + " had illegal job";
+			}
+			if ( item.isPickedUp() )
+			{
+				const bool worn    = 0 != wornItems.count( item.id() );
+				const bool carried = 0 != carriedItems.count( item.id() );
+				if ( !worn && !carried )
+				{
+					item.setIsConstructedOrEquipped( false );
+					Global::inv().putDownItem( item.id(), item.getPos() );
+					qWarning() << "item " + QString::number( item.id() ) + " " + item.itemSID() + " found lost in space";
+				}
+				else if ( worn xor item.isConstructedOrEquipped() )
+				{
+					item.setIsConstructedOrEquipped( false );
+					Global::inv().putDownItem( item.id(), item.getPos() );
+					qWarning() << "item " + QString::number( item.id() ) + " " + item.itemSID() + " found being dragged along";
+				}
+			}
+		}
+	}
 }
 
 QString IO::versionString( QString folder )
@@ -335,7 +422,7 @@ QString IO::versionString( QString folder )
 
 	QVariantMap vm = ja.toVariantList().first().toMap();
 
-	if( vm.contains( "Version" ) )
+	if ( vm.contains( "Version" ) )
 	{
 		return vm.value( "Version" ).toString();
 	}
@@ -422,7 +509,6 @@ bool IO::loadGame( QJsonDocument& jd )
 		auto map = doc.first().toMap();
 		GameState::load( map );
 	}
-
 
 	for ( auto vMat : GameState::addedMaterials )
 	{
@@ -656,7 +742,7 @@ QJsonArray IO::jsonArrayMonsters( int startIndex, int amount )
 		qDebug() << "jsonArrayMonsters";
 	QJsonArray ja;
 
-	int i          = startIndex;
+	int i         = startIndex;
 	auto monsters = Global::cm().monsters();
 
 	while ( i < monsters.size() && amount > 0 )
@@ -1363,14 +1449,14 @@ bool IO::saveFile( QString url, const QJsonDocument& jd )
 bool IO::loadFile( QString url, QJsonDocument& ja )
 {
 	QFile file( url );
-    file.open(QIODevice::ReadOnly | QIODevice::Text);
-    QString val = file.readAll();
-    file.close();
+	file.open( QIODevice::ReadOnly | QIODevice::Text );
+	QString val = file.readAll();
+	file.close();
 
 	QJsonParseError error;
-    ja = QJsonDocument::fromJson( val.toUtf8(), &error );
+	ja = QJsonDocument::fromJson( val.toUtf8(), &error );
 
-	if( error.error == QJsonParseError::NoError )
+	if ( error.error == QJsonParseError::NoError )
 	{
 		return true;
 	}

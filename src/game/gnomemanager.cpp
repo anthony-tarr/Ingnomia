@@ -37,7 +37,6 @@
 
 GnomeManager::GnomeManager()
 {
-	loadProfessions();
 }
 
 GnomeManager::~GnomeManager()
@@ -661,14 +660,6 @@ void GnomeManager::setInMission( unsigned int gnomeID, unsigned int missionID )
 	{
 		m_gnomesByID[gnomeID]->setMission( missionID );
 		m_gnomesByID[gnomeID]->setOnMission( true );
-	}
-}
-
-void GnomeManager::setTargets( unsigned int gnomeID, QList<unsigned int> targets )
-{
-	if ( m_gnomesByID.contains( gnomeID ) )
-	{
-		m_gnomesByID[gnomeID]->setTargets( targets );
 	}
 }
 

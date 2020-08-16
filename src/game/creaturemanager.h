@@ -70,12 +70,14 @@ public:
 	QList<QString> types();
 	QList<unsigned int> animalsByType( QString type );
 
+	bool hasPathTo( Position& pos, unsigned int creatureID );
+
 private:
 	QList<Creature*> m_creatures;
 	QList<Animal*> m_animals;
 	QList<Monster*> m_monsters;
 
-	QMap<unsigned int, Creature*> m_creaturesByID;
+	QHash<unsigned int, Creature*> m_creaturesByID;
 
 	QMap<QString, unsigned int> m_countPerType;
 	QMap<QString, QList<unsigned int>> m_creaturesPerType;

@@ -51,7 +51,7 @@ public:
 	{
 		static GLuint counter    = 0;
 		QOpenGLExtraFunctions* f = QOpenGLContext::currentContext()->extraFunctions();
-		f->glPushDebugGroup( GL_DEBUG_SOURCE_APPLICATION, counter++, strlen( c ), c );
+		f->glPushDebugGroup( GL_DEBUG_SOURCE_APPLICATION, counter++, static_cast<GLsizei>( strlen( c ) ), c );
 	}
 	~DebugScope()
 	{
@@ -427,6 +427,8 @@ void MainWindowRenderer::updateRenderParams()
 
 	m_waterQuality = Config::getInstance().get( "waterQuality" ).toInt();
 
+	m_viewLevel = Config::getInstance().get( "viewLevel" ).toInt();
+
 	m_volume.min = { 0, 0, qMin( qMax( m_viewLevel - m_renderDepth, 0 ), Global::dimZ - 1 ) };
 	m_volume.max = { Global::dimX - 1, Global::dimY - 1, qMin( m_viewLevel, Global::dimZ - 1 ) };
 
@@ -557,6 +559,12 @@ void MainWindowRenderer::paintWorld()
 	{
 		m_pause = pause;
 	}
+}
+
+void MainWindowRenderer::onRenderParamsChanged()
+{
+	updateRenderParams();
+	emit redrawRequired();
 }
 
 void MainWindowRenderer::setCommonUniforms( QOpenGLShaderProgram* shader )
@@ -730,8 +738,7 @@ void MainWindowRenderer::resize( int w, int h )
 {
 	m_width  = w;
 	m_height = h;
-	updateRenderParams();
-	emit redrawRequired();
+	onRenderParamsChanged();
 }
 
 void MainWindowRenderer::rotate( int direction )
@@ -739,31 +746,27 @@ void MainWindowRenderer::rotate( int direction )
 	direction  = qBound( -1, direction, 1 );
 	m_rotation = ( 4 + m_rotation + direction ) % 4;
 	Config::getInstance().set( "rotation", m_rotation );
-	updateRenderParams();
-	emit redrawRequired();
+	onRenderParamsChanged();
 }
 
 void MainWindowRenderer::move( int x, int y )
 {
 	m_moveX += x / m_scale;
 	m_moveY += y / m_scale;
-	updateRenderParams();
-	emit redrawRequired();
+	onRenderParamsChanged();
 }
 
 void MainWindowRenderer::scale( float factor )
 {
 	m_scale *= factor;
 	m_scale = qBound( 0.25f, m_scale, 15.f );
-	updateRenderParams();
-	emit redrawRequired();
+	onRenderParamsChanged();
 }
 
 void MainWindowRenderer::setViewLevel( int level )
 {
 	m_viewLevel = level;
-	updateRenderParams();
-	emit redrawRequired();
+	onRenderParamsChanged();
 }
 
 void MainWindowRenderer::updateWorld()

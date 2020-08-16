@@ -150,14 +150,24 @@ Squad::Squad( const QVariantMap& in )
 
 	if( in.contains( "Priorities" ) )
 	{
+		QSet<QString> typeSet;
 		auto vl = in.value( "Priorities" ).toList();
 		for( auto vEntry : vl )
 		{
 			auto vm = vEntry.toMap();
 			auto type = vm.value( "Type" ).toString();
+			typeSet.insert( type );
 			TargetPriority tp { type, (MilAttitude)vm.value( "Attitude" ).toInt() };
-			tp.huntTargets = Global::cm().animalsByType( type ).toSet();
 			priorities.append( tp );
+		}
+		auto types = Global::cm().types();
+		for( auto type : types )
+		{
+			if( !typeSet.contains( type ) )
+			{
+				TargetPriority tp { type, MilAttitude::_IGNORE };
+				priorities.append( tp );
+			}
 		}
 	}
 	else
@@ -166,7 +176,6 @@ Squad::Squad( const QVariantMap& in )
 		for( auto type : types )
 		{
 			TargetPriority tp { type, MilAttitude::_IGNORE };
-			tp.huntTargets = Global::cm().animalsByType( type ).toSet();
 			priorities.append( tp );
 		}
 	}
@@ -232,7 +241,7 @@ void MilitaryManager::init()
 
 void MilitaryManager::save()
 {
-	auto vm = Global::mil().serialize();
+	auto vm = serialize();
 	vm.remove( "Squads" );
 	QJsonObject jo = QJsonObject::fromVariantMap( vm );
 	IO::saveFile( QStandardPaths::writableLocation( QStandardPaths::DocumentsLocation ) + "/My Games/Ingnomia/" + "settings/military.json", jo );
@@ -333,6 +342,15 @@ Uniform* MilitaryManager::uniform( unsigned int roleID )
 	return nullptr;
 }
 
+Uniform MilitaryManager::uniformCopy( unsigned int roleID )
+{
+	if ( m_roles.contains( roleID ) )
+	{
+		return m_roles[roleID].uniform;
+	}
+	return Uniform();
+}
+
 
 
 
@@ -392,7 +410,7 @@ void MilitaryManager::moveSquadUp( unsigned int id )
 	{
 		if( m_squads[i].id == id )
 		{
-			m_squads.swap( i, i - 1 );
+			m_squads.swapItemsAt( i, i - 1 );
 			return;
 		}
 	}
@@ -404,7 +422,7 @@ void MilitaryManager::moveSquadDown( unsigned int id )
 	{
 		if( m_squads[i].id == id )
 		{
-			m_squads.swap( i, i + 1 );
+			m_squads.swapItemsAt( i, i + 1 );
 			return;
 		}
 	}
@@ -595,27 +613,6 @@ void MilitaryManager::onSetAttitude( unsigned int squadID, QString type, MilAtti
 				if( prio.type == type )
 				{
 					prio.attitude = attitude;
-
-					switch( attitude )
-					{
-						case MilAttitude::HUNT:
-							if( Global::cm().count( type ) > 0 )
-							{
-								prio.huntTargets = Global::cm().animalsByType( type ).toSet();
-							}
-							break;
-						case MilAttitude::ATTACK:
-							prio.huntTargets.clear();
-							break;
-						case MilAttitude::_IGNORE:
-							prio.huntTargets.clear();
-							break;
-						case MilAttitude::AVOID:
-							prio.huntTargets.clear();
-							break;
-					}
-					
-
 					return;
 				}
 			}
@@ -633,7 +630,7 @@ bool MilitaryManager::movePrioUp( unsigned int squadID, QString type )
 			{
 				if( squad.priorities[i].type == type )
 				{
-					squad.priorities.swap( i - 1, i );
+					squad.priorities.swapItemsAt( i - 1, i );
 					return true;
 				}
 			}
@@ -652,44 +649,11 @@ bool MilitaryManager::movePrioDown( unsigned int squadID, QString type )
 			{
 				if( squad.priorities[i].type == type )
 				{
-					squad.priorities.swap( i , i + 1 );
+					squad.priorities.swapItemsAt( i, i + 1 );
 					return true;
 				}
 			}
 		}
-	}
-	return false;
-}
-
-bool MilitaryManager::updateTargets( unsigned int squadID )
-{
-	auto squ = squad( squadID );
-	if( squ )
-	{
-		auto prios = squ->priorities;
-
-		for( auto& prio : prios )
-		{
-			switch( prio.attitude )
-			{
-				case MilAttitude::HUNT:
-					if( Global::cm().count( prio.type ) > 0 )
-					{
-						prio.huntTargets = Global::cm().animalsByType( prio.type ).toSet();
-					}
-					break;
-				case MilAttitude::ATTACK:
-					prio.huntTargets.clear();
-					break;
-				case MilAttitude::_IGNORE:
-					prio.huntTargets.clear();
-					break;
-				case MilAttitude::AVOID:
-					prio.huntTargets.clear();
-					break;
-			}
-		}
-		return true;
 	}
 	return false;
 }

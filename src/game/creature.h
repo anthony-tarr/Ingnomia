@@ -113,10 +113,12 @@ struct Equipment
 	EquipmentItem rightHandHeld;
 	EquipmentItem back;
 
+	QList<unsigned int> wornItems() const;
 	QVariantMap serialize();
 	void clearAllItems();
 	Equipment( const QVariantMap& in );
 	float getDamageReduction( CreaturePart part );
+	EquipmentItem& getSlot( CreaturePart part );
 
 	Equipment() {};
 };
@@ -226,8 +228,6 @@ public:
 
 	void addAggro( unsigned int target, int value );
 
-	void setTargets( QList<unsigned int> targets );
-
 	virtual void updateAttackValues();
 
 	QStringList needIDs() const;
@@ -261,6 +261,16 @@ public:
 	QList<unsigned int> inventoryItems() const
 	{
 		return m_inventoryItems;
+	}
+
+	QList<unsigned int> carriedItems() const
+	{
+		return m_carriedItems;
+	}
+
+	QList<unsigned int> claimedItems()
+	{
+		return m_claimedItems;
 	}
 
 	bool isAnimal() { return m_type == CreatureType::ANIMAL; }
@@ -317,7 +327,6 @@ protected:
 	qint8 m_facingAfterMove = -1;
 
 	unsigned int m_currentAttackTarget = 0;
-	QList<unsigned int> m_targets;
 	bool m_goneOffMap = false;
 
 	QVariantMap m_btBlackBoard;
@@ -405,7 +414,6 @@ protected:
 	void removeClaimedItem( unsigned int item );
 	void unclaimAll();
 	void clearClaimedItems();
-	QList<unsigned int> claimedItems();
 };
 
 struct CreatureCompare

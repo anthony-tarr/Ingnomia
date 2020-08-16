@@ -21,7 +21,8 @@
 
 #include <QObject>
 
-struct Uniform;
+#include "../game/gnome.h"
+#include "../game/militarymanager.h"
 
 struct GuiCreatureInfo
 {
@@ -41,7 +42,8 @@ struct GuiCreatureInfo
 
 	QString activity;
 
-	Uniform* uniform = nullptr;
+	Uniform uniform;
+	Equipment equipment;
 };
 Q_DECLARE_METATYPE( GuiCreatureInfo )
 

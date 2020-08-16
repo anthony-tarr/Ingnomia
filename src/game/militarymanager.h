@@ -86,8 +86,6 @@ Q_DECLARE_METATYPE( MilAttitude )
 struct TargetPriority {
 	QString type;
 	MilAttitude attitude;
-
-	QSet<unsigned int> huntTargets;
 };
 
 struct Squad
@@ -128,6 +126,7 @@ public:
 	QVariantMap serialize();
 
 	Uniform* uniform( unsigned int roleID );
+	Uniform uniformCopy( unsigned int roleID );
 
 	MilitaryRole* role( unsigned int id );
 
@@ -197,6 +196,4 @@ public slots:
 
 	bool movePrioUp( unsigned int squadID, QString type );
 	bool movePrioDown( unsigned int squadID, QString type );
-
-	bool updateTargets( unsigned int squadID );
 };

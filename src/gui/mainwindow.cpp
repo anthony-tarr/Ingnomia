@@ -16,9 +16,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-#include "MainWindow.h"
-
-#include "license.h"
+#include "mainwindow.h"
 
 #include "../base/config.h"
 #include "../base/global.h"
@@ -28,6 +26,7 @@
 #include "../game/gamemanager.h"
 #include "../game/world.h"
 #include "../gui/eventconnector.h"
+#include "license.h"
 #include "mainwindowrenderer.h"
 #include "xaml/GameGui.xaml.h"
 #include "xaml/GameModel.h"
@@ -39,8 +38,6 @@
 #include "xaml/MainPage.xaml.h"
 #include "xaml/NewGameModel.h"
 #include "xaml/NewGamePage.xaml.h"
-#include "xaml/neighbors.xaml.h"
-#include "xaml/neighborsmodel.h"
 #include "xaml/Population.xaml.h"
 #include "xaml/PopulationModel.h"
 #include "xaml/SettingsModel.h"
@@ -56,12 +53,13 @@
 #include "xaml/creatureinfomodel.h"
 #include "xaml/debug.xaml.h"
 #include "xaml/debugmodel.h"
+#include "xaml/military.xaml.h"
+#include "xaml/militarymodel.h"
+#include "xaml/neighbors.xaml.h"
+#include "xaml/neighborsmodel.h"
 #include "xaml/stockpilegui.xaml.h"
 #include "xaml/workshopgui.xaml.h"
 #include "xaml/workshopmodel.h"
-#include "xaml/military.xaml.h"
-#include "xaml/militarymodel.h"
-
 
 #include <NsApp/Launcher.h>
 #include <NsApp/LocalFontProvider.h>
@@ -141,6 +139,7 @@ void MainWindow::toggleFullScreen()
 		w->showNormal();
 		m_isFullScreen = false;
 	}
+	m_renderer->onRenderParamsChanged();
 }
 
 void MainWindow::keyPressEvent( QKeyEvent* event )
@@ -168,19 +167,23 @@ void MainWindow::keyPressEvent( QKeyEvent* event )
 	{
 		switch ( event->key() )
 		{
+			case Qt::Key_H:
+				Global::wallsLowered = !Global::wallsLowered;
+				m_renderer->onRenderParamsChanged();
+				break;
 			case Qt::Key_K:
-				if ( m_view )
-				{
-					bool showMM = GameManager::getInstance().showMainMenu();
-					GameManager::getInstance().setShowMainMenu( !showMM );
-					qDebug() << "show main menu" << GameManager::getInstance().showMainMenu();
-				}
 				break;
 			case Qt::Key_D:
 				if ( event->modifiers() & Qt::ControlModifier )
 				{
 					Global::debugMode = !Global::debugMode;
 				}
+				else
+				{
+					auto& config = Config::getInstance();
+					config.set( "overlay", !config.get( "overlay" ).toBool() );
+				}
+				m_renderer->onRenderParamsChanged();
 				break;
 			case Qt::Key_F:
 				toggleFullScreen();
@@ -411,6 +414,24 @@ void MainWindow::wheelEvent( QWheelEvent* event )
 	}
 }
 
+void MainWindow::focusInEvent( QFocusEvent* e )
+{
+	if ( m_view )
+	{
+		m_view->Activate();
+		noesisTick();
+	}
+}
+
+void MainWindow::focusOutEvent( QFocusEvent* e )
+{
+	if ( m_view )
+	{
+		m_view->Deactivate();
+		noesisTick();
+	}
+}
+
 void MainWindow::keyboardZPlus( bool shift, bool ctrl )
 {
 	int dimZ      = Global::dimZ - 1;
@@ -419,7 +440,7 @@ void MainWindow::keyboardZPlus( bool shift, bool ctrl )
 	viewLevel = qMax( 0, qMin( dimZ, viewLevel ) );
 	Config::getInstance().set( "viewLevel", viewLevel );
 
-	m_renderer->setViewLevel( viewLevel );
+	m_renderer->onRenderParamsChanged();
 	emit signalViewLevel( viewLevel );
 
 	if ( Selection::getInstance().hasAction() )
@@ -439,7 +460,7 @@ void MainWindow::keyboardZMinus( bool shift, bool ctrl )
 	viewLevel = qMax( 0, qMin( dimZ, viewLevel ) );
 	Config::getInstance().set( "viewLevel", viewLevel );
 
-	m_renderer->setViewLevel( viewLevel );
+	m_renderer->onRenderParamsChanged();
 	emit signalViewLevel( viewLevel );
 
 	if ( Selection::getInstance().hasAction() )
@@ -485,7 +506,7 @@ void MainWindow::noesisInit()
 
 	registerComponents();
 
-	Noesis::Ptr<Noesis::FrameworkElement> xaml = Noesis::GUI::LoadXaml<Noesis::FrameworkElement>( "main.xaml" );
+	Noesis::Ptr<Noesis::FrameworkElement> xaml = Noesis::GUI::LoadXaml<Noesis::FrameworkElement>( "Main.xaml" );
 
 	// View creation to render and interact with the user interface
 	// We transfer the ownership to a global pointer instead of a Ptr<> because there is no way
@@ -610,10 +631,10 @@ MainWindowRenderer* MainWindow::renderer()
 
 void MainWindow::installResourceProviders()
 {
-
-	Noesis::GUI::SetXamlProvider( Noesis::MakePtr<NoesisApp::LocalXamlProvider>( "./content/xaml/" ) );
-	Noesis::GUI::SetTextureProvider( Noesis::MakePtr<NoesisApp::LocalTextureProvider>( "./content/xaml/" ) );
-	Noesis::GUI::SetFontProvider( Noesis::MakePtr<NoesisApp::LocalFontProvider>( "./content/xaml/" ) );
+	const std::string contentPath = Config::getInstance().get( "dataPath" ).toString().toStdString() + "/xaml/";
+	Noesis::GUI::SetXamlProvider( Noesis::MakePtr<NoesisApp::LocalXamlProvider>( contentPath.c_str() ) );
+	Noesis::GUI::SetTextureProvider( Noesis::MakePtr<NoesisApp::LocalTextureProvider>( contentPath.c_str() ) );
+	Noesis::GUI::SetFontProvider( Noesis::MakePtr<NoesisApp::LocalFontProvider>( contentPath.c_str() ) );
 }
 
 void MainWindow::registerComponents()

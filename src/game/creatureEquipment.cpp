@@ -35,6 +35,30 @@ EquipmentItem::EquipmentItem( const QVariantMap& in )
 	materialID = in.value( "MaterialID" ).toUInt();
 }
 
+QList<unsigned int> Equipment::wornItems() const
+{
+	QList<unsigned int> items;
+	EquipmentItem const *const equipmentSlots[] = {
+		&head,
+		&chest,
+		&arm,
+		&hand,
+		&leg,
+		&foot,
+		&leftHandHeld,
+		&rightHandHeld,
+		&back,
+	};
+	for ( const auto& slot : equipmentSlots )
+	{
+		if (slot->itemID)
+		{
+			items.append( slot->itemID );
+		}
+	}
+	return items;
+}
+
 QVariantMap Equipment::serialize()
 {
 	QVariantMap vEqui;
@@ -162,4 +186,32 @@ float Equipment::getDamageReduction( CreaturePart part )
 	}
 
 	return reduction;
+}
+
+EquipmentItem& Equipment::getSlot( CreaturePart part )
+{
+	switch ( part )
+	{
+		case CP_ARMOR_HEAD:
+			return head;
+		case CP_ARMOR_TORSO:
+			return chest;
+		case CP_ARMOR_ARM:
+			return arm;
+		case CP_ARMOR_HAND:
+			return hand;
+		case CP_ARMOR_LEG:
+			return leg;
+		case CP_ARMOR_FOOT:
+			return foot;
+		case CP_LEFT_HAND_HELD:
+			return leftHandHeld;
+		case CP_RIGHT_HAND_HELD:
+			return rightHandHeld;
+		case CP_BACK:
+			return back;
+		default:
+			qWarning() << "Invalid equipment slot!";
+			abort();
+	}
 }

@@ -23,6 +23,8 @@
 #include "../gfx/spritefactory.h"
 #include "../gui/strings.h"
 
+#include "jobmanager.h"
+
 #include <QDebug>
 #include <QVariantMap>
 
@@ -66,7 +68,7 @@ Item::Item( QVariantMap in ) :
 	m_isInStockpile = in.value( "InStockpile" ).toUInt();
 	m_isInJob       = in.value( "InJob" ).toUInt();
 	m_isInContainer = in.value( "InContainer" ).toUInt();
-	m_isConstructed = in.value( "Constructed" ).toBool();
+	m_isConstructedOrEquipped = in.value( "Constructed" ).toBool();
 	m_isPickedUp    = in.value( "IsPickedUp" ).toBool();
 	m_value         = in.value( "Value" ).toUInt();
 	m_madeBy        = in.value( "MadeBy" ).toUInt();
@@ -122,7 +124,7 @@ Item::Item( const Item& other ) :
 	m_isInStockpile( other.m_isInStockpile ),
 	m_isInJob( other.m_isInJob ),
 	m_isInContainer( other.m_isInContainer ),
-	m_isConstructed( other.m_isConstructed ),
+	m_isConstructedOrEquipped( other.m_isConstructedOrEquipped ),
 	m_isPickedUp( other.m_isPickedUp ),
 	m_value( other.m_value ),
 	m_madeBy( other.m_madeBy ),
@@ -167,7 +169,7 @@ QVariant Item::serialize() const
 	out.insert( "InStockpile", m_isInStockpile );
 	out.insert( "InJob", m_isInJob );
 	out.insert( "InContainer", m_isInContainer );
-	out.insert( "Constructed", m_isConstructed );
+	out.insert( "Constructed", m_isConstructedOrEquipped );
 	out.insert( "IsPickedUp", m_isPickedUp );
 	out.insert( "Value", m_value );
 	out.insert( "MadeBy", m_madeBy );
@@ -252,13 +254,14 @@ bool Item::isContainer() const
 	return false;
 }
 
-QList<unsigned int> Item::containedItems() const
+const QSet<unsigned int>& Item::containedItems() const
 {
 	if ( m_extraData )
 	{
-		return m_extraData->containedItems.values();
+		return m_extraData->containedItems;
 	}
-	return {};
+	static const QSet<unsigned int> nullopt;
+	return nullopt;
 }
 
 unsigned char Item::capacity() const
@@ -324,14 +327,14 @@ unsigned char Item::stackSize() const
 	return DB::select( "StackSize", "Items", m_itemUID ).toUInt();
 }
 
-bool Item::isConstructed() const
+bool Item::isConstructedOrEquipped() const
 {
-	return m_isConstructed;
+	return m_isConstructedOrEquipped;
 }
 
-void Item::setIsConstructed( bool value )
+void Item::setIsConstructedOrEquipped( bool value )
 {
-	m_isConstructed = value;
+	m_isConstructedOrEquipped = value;
 }
 
 void Item::addComponent( ItemMaterial im )

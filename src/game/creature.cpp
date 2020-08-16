@@ -97,8 +97,6 @@ Creature::Creature( QVariantMap in ) :
 
 	m_currentAttackTarget( in.value( "CurrentAttackTarget" ).toUInt() ),
 
-	m_targets( Util::variantList2UInt( in.value( "Targets" ).toList() ) ),
-
 	m_goneOffMap( in.value( "GoneOffMap" ).toBool() ),
 
 	//combat variables
@@ -226,8 +224,6 @@ void Creature::serialize( QVariantMap& out ) const
 	out.insert( "CurrentTargetPos", m_currentTargetPosition.toString() );
 
 	out.insert( "CurrentAttackTarget", m_currentAttackTarget );
-
-	out.insert( "Targets", Util::uintList2Variant( m_targets ) );
 
 	out.insert( "FacingAfterMove", m_facingAfterMove );
 	out.insert( "Expires", m_expires );
@@ -910,7 +906,15 @@ BT_RESULT Creature::conditionTargetAdjacent( bool halt )
 
 BT_RESULT Creature::conditionIsInCombat( bool halt )
 {
-	if ( m_aggroList.size() || m_targets.size() )
+	if ( m_currentAttackTarget )
+	{
+		const Creature* creature = Global::cm().creature( m_currentAttackTarget );
+		if ( !creature || creature->isDead() || !Global::cm().hasPathTo( m_position, m_currentAttackTarget ) )
+		{
+			m_currentAttackTarget = 0;
+		}
+	}
+	if ( m_aggroList.size() || m_currentAttackTarget )
 	{
 		setThoughtBubble( "Combat" );
 		return BT_RESULT::SUCCESS;
@@ -1022,12 +1026,7 @@ void Creature::addAggro( unsigned int target, int value )
 		AggroEntry ae { value, target };
 		m_aggroList.append( ae );
 	}
-	qSort( m_aggroList );
-}
-
-void Creature::setTargets( QList<unsigned int> targets )
-{
-	m_targets = targets;
+	std::sort( m_aggroList.begin(), m_aggroList.end() );
 }
 
 void Creature::updateAttackValues()
@@ -1069,11 +1068,6 @@ void Creature::unclaimAll()
 void Creature::clearClaimedItems()
 {
 	m_claimedItems.clear();
-}
-
-QList<unsigned int> Creature::claimedItems()
-{
-	return m_claimedItems;
 }
 
 void Creature::log( QString txt )
