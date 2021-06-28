@@ -89,6 +89,18 @@ void NewGameSettings::save()
 
 
 	QVariantList startItems;
+	collectStartItems( startItems );
+
+	embarkMap.insert( "startingItems", startItems );
+
+	QJsonDocument sd = QJsonDocument::fromVariant( embarkMap );
+	IO::saveFile( QStandardPaths::writableLocation( QStandardPaths::DocumentsLocation ) + "/My Games/Ingnomia/" + "settings/newgame.json", sd );
+
+	savePreset( startItems );
+}
+
+void NewGameSettings::collectStartItems( QVariantList& sil )
+{
 	for( const auto& si : m_startingItems )
 	{
 		QVariantMap sim;
@@ -122,7 +134,7 @@ void NewGameSettings::save()
 				sim.insert( "Type", "CombinedItem" );
 			}
 		}
-		startItems.append( sim );
+		sil.append( sim );
 	}
 	for( const auto& si : m_startingAnimals )
 	{
@@ -131,13 +143,8 @@ void NewGameSettings::save()
 		sim.insert( "ItemID", si.type );
 		sim.insert( "Gender", si.gender );
 		sim.insert( "Type", "Animal" );
-		startItems.append( sim );
+		sil.append( sim );
 	}
-
-	embarkMap.insert( "startingItems", startItems );
-
-	QJsonDocument sd = QJsonDocument::fromVariant( embarkMap );
-	IO::saveFile( QStandardPaths::writableLocation( QStandardPaths::DocumentsLocation ) + "/My Games/Ingnomia/" + "settings/newgame.json", sd );
 }
 
 void NewGameSettings::loadEmbarkMap()
@@ -148,14 +155,14 @@ void NewGameSettings::loadEmbarkMap()
 	if ( !IO::loadFile( QStandardPaths::writableLocation( QStandardPaths::DocumentsLocation ) + "/My Games/Ingnomia/" + "settings/newgame.json", sd ) )
 	{
 		// if it doesn't exist get from /content/JSON
-		if ( IO::loadFile( Config::getInstance().get( "dataPath" ).toString() + "/JSON/newgame.json", sd ) )
+		if ( IO::loadFile( Global::cfg->get( "dataPath" ).toString() + "/JSON/newgame.json", sd ) )
 		{
 			IO::saveFile( QStandardPaths::writableLocation( QStandardPaths::DocumentsLocation ) + "/My Games/Ingnomia/" + "settings/newgame.json", sd );
 		}
 		else
 		{
 			qDebug() << "Unable to find new game config!";
-			exit( 0 );
+			abort();
 		}
 	}
 	auto embarkMap = sd.toVariant().toMap();
@@ -165,7 +172,7 @@ void NewGameSettings::loadEmbarkMap()
 
 	for ( auto id : trees )
 	{
-		CheckableItem ci { id, S::s( "$ItemName_" + id ), "Tree", embarkMap.value( "allowedTrees" ).toMap().value( id ).toBool() };
+		CheckableItem ci { id, S::s( "$ItemName_" + id ), "Tree", embarkMap.value( "allowedTrees" ).toMap().value( id ).toBool(), 0 };
 		m_checkableItems.insert( id, ci );
 	}
 
@@ -175,7 +182,7 @@ void NewGameSettings::loadEmbarkMap()
 	{
 		if ( DB::select( "AllowInWild", "Plants", id ).toBool() )
 		{
-			CheckableItem ci { id, S::s( "$MaterialName_" + id ), "Plant", embarkMap.value( "allowedPlants" ).toMap().value( id ).toBool() };
+			CheckableItem ci { id, S::s( "$MaterialName_" + id ), "Plant", embarkMap.value( "allowedPlants" ).toMap().value( id ).toBool(), 0 };
 			m_checkableItems.insert( id, ci );
 		}
 	}
@@ -197,7 +204,7 @@ void NewGameSettings::loadEmbarkMap()
 	setStartingItems( sil );
 
 	// QString m_kingdomName not in embark map, we want to change it on every embark
-	QString m_seed = embarkMap.value( "seed" ).toString();
+	m_seed = embarkMap.value( "seed" ).toString();
 
 	m_worldSize    = embarkMap.value( "dimX" ).toInt();
 	m_zLevels      = embarkMap.value( "dimZ" ).toInt();
@@ -494,7 +501,10 @@ void NewGameSettings::removeStartingAnimal( QString tag )
 void NewGameSettings::loadPresets()
 {
 	QJsonDocument sd;
-	bool ok = IO::loadFile( Config::getInstance().get( "dataPath" ).toString() + "/JSON/embarkpresets.json", sd );
+
+	QString exePath = QCoreApplication::applicationDirPath();
+
+	bool ok = IO::loadFile( exePath + "/content/JSON/embarkpresets.json", sd );
 	if ( ok )
 	{
 		m_standardPresets = sd.toVariant().toList();
@@ -503,13 +513,22 @@ void NewGameSettings::loadPresets()
 	ok = IO::loadFile( QStandardPaths::writableLocation( QStandardPaths::DocumentsLocation ) + "/My Games/Ingnomia/settings/userpresets.json", sd );
 	if ( ok )
 	{
-		m_userPresets = sd.toVariant().toList();
+		m_userPresets.clear();
+		for( auto vp : sd.toVariant().toList() )
+		{
+			m_userPresets.append( vp.toMap() );
+		}
 	}
 }
 
 void NewGameSettings::saveUserPresets()
 {
-	QJsonDocument sd = QJsonDocument::fromVariant( m_userPresets );
+	QVariantList up;
+	for( auto pm : m_userPresets )
+	{
+		up.append( pm );
+	}
+	QJsonDocument sd = QJsonDocument::fromVariant( up );
 	IO::saveFile( QStandardPaths::writableLocation( QStandardPaths::DocumentsLocation ) + "/My Games/Ingnomia/settings/userpresets.json", sd );
 }
 
@@ -528,9 +547,8 @@ void NewGameSettings::setPreset( QString name )
 			return;
 		}
 	}
-	for ( auto p : m_userPresets )
+	for ( auto pm : m_userPresets )
 	{
-		auto pm = p.toMap();
 		if ( pm.value( "Name" ).toString() == name )
 		{
 			auto sil = pm.value( "startingItems" ).toList();
@@ -550,9 +568,8 @@ QString NewGameSettings::addPreset()
 	while ( true )
 	{
 		bool conflict = false;
-		for ( auto p : m_userPresets )
+		for ( auto pm : m_userPresets )
 		{
-			auto pm   = p.toMap();
 			auto name = pm.value( "Name" ).toString();
 			if ( name == newName )
 			{
@@ -581,9 +598,8 @@ QString NewGameSettings::addPreset()
 				return newName;
 			}
 		}
-		for ( auto p : m_userPresets )
+		for ( auto pm : m_userPresets )
 		{
-			auto pm = p.toMap();
 			if ( pm.value( "Name" ).toString() == m_selectedPreset )
 			{
 				pm.insert( "Name", newName );
@@ -593,14 +609,45 @@ QString NewGameSettings::addPreset()
 			}
 		}
 	}
+	else
+	{
+		QVariantMap pm;
+		pm.insert( "Name", newName );
+		pm.insert( "startingItems", QVariantList() );
+		m_userPresets.append( pm );
+		saveUserPresets();
+		return newName;
+	}
 	return "";
+}
+
+bool NewGameSettings::savePreset(  QVariantList items )
+{
+	for ( auto& pm : m_userPresets )
+	{
+		if ( pm.value( "Name" ).toString() == m_selectedPreset )
+		{
+			pm.insert( "startingItems", items );
+		
+			saveUserPresets();
+			return true;
+		}
+	}
+	return false;
+}
+
+bool NewGameSettings::onSavePreset()
+{
+	QVariantList sil;
+	collectStartItems( sil );
+	return savePreset( sil );
 }
 
 bool NewGameSettings::removePreset( QString name )
 {
 	for ( int i = 0; i < m_userPresets.size(); ++i )
 	{
-		auto pm = m_userPresets[i].toMap();
+		auto pm = m_userPresets[i];
 		if ( pm.value( "Name" ).toString() == name )
 		{
 			m_selectedPreset = "";
@@ -664,9 +711,9 @@ QStringList NewGameSettings::presetNames()
 	{
 		out.append( p.toMap().value( "Name" ).toString() );
 	}
-	for ( auto p : m_userPresets )
+	for ( auto pm : m_userPresets )
 	{
-		out.append( p.toMap().value( "Name" ).toString() );
+		out.append( pm.value( "Name" ).toString() );
 	}
 	return out;
 }
@@ -772,7 +819,7 @@ bool NewGameSettings::setNumWildAnimals( int value )
 	return false;
 }
 
-const int NewGameSettings::maxAnimalsPerType( QString type )
+int NewGameSettings::maxAnimalsPerType( QString type )
 {
 	if( m_checkableItems.contains( type ) )
 	{

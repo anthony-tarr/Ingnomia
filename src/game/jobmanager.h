@@ -17,6 +17,7 @@
 */
 #pragma once
 
+
 #include "../base/priorityqueue.h"
 #include "../game/job.h"
 
@@ -24,37 +25,32 @@
 #include <QHash>
 #include <QList>
 #include <QMap>
-#include <QMutex>
 #include <QQueue>
 #include <QString>
 
-//typedef QMap<unsigned int, Job> JobHash;
+class Game;
 
-//typedef QMap<QString, QMultiMap<int, unsigned int> >JobMap;
-
-//typedef PriorityQueue< unsigned int, unsigned char> JobQueue;
-
-//typedef QHash<unsigned int, unsigned int >JobPositionHash;
-
-//typedef QPair<QString, QString> ItemMaterialPair;
-
-class JobManager
+class JobManager : public QObject
 {
+	Q_OBJECT
+	Q_DISABLE_COPY_MOVE( JobManager )
 private:
-	QMap<unsigned int, Job> m_jobList;
-	QMap<QString, QMultiMap<int, unsigned int>> m_jobsPerType;
+	QPointer<Game> g;
 
-	QMap<QString, int> m_skillToInt;
+	QHash<unsigned int, QSharedPointer<Job>> m_jobList;
+	QHash<QString, QMultiHash<int, unsigned int>> m_jobsPerType;
 
-	QHash<unsigned int, unsigned int> m_jobPositions;
+	QHash<QString, int> m_skillToInt;
+
+	QHash<Position, unsigned int> m_jobPositions;
 
 	QQueue<unsigned int> m_returnedJobQueue;
 
-	QMap<QString, QStringList> m_jobIDs;
+	QHash<QString, QStringList> m_jobIDs;
+
+	QSet<QString> m_workshopSkills;
 
 	int m_startIndex;
-
-	QMutex m_mutex;
 
 	bool workPositionWalkable( unsigned int jobID );
 	bool isReachable( unsigned int jobID, unsigned int regionID );
@@ -62,27 +58,26 @@ private:
 	bool isEnclosedBySameType( unsigned int jobID );
 
 	bool requiredToolExists( unsigned int jobID );
-	bool requiredItemsExist( unsigned int jobID );
+	bool requiredItemsAvail( unsigned int jobID );
 
 	bool insertIntoPositionHash( unsigned int jobID );
 	void removeFromPositionHash( unsigned int jobID );
 
 public:
-	JobManager();
+	JobManager() = delete;
+	JobManager( Game* parent );
 	~JobManager();
 
 	void onTick();
 
-	void reset();
-
 	QString jobManagerInfo();
 
-	//Job* getJob( QVariantList& profs, Position& pos );
-	//Job* getJob( unsigned int jobID );
+	//QSharedPointer<Job> getJob( QVariantList& profs, Position& pos );
+	//QSharedPointer<Job> getJob( unsigned int jobID );
 
 	unsigned int getJob( QStringList profs, unsigned int gnomeID, Position& pos );
-	Job* getJob( unsigned int jobID );
-	Job* getJobAtPos( Position pos );
+	QSharedPointer<Job> getJob( unsigned int jobID );
+	QSharedPointer<Job> getJobAtPos( Position pos );
 
 	void giveBackJob( unsigned int jobID );
 
@@ -97,12 +92,14 @@ public:
 
 	void addLoadedJob( QVariant vals );
 
-	QMap<unsigned int, Job>& allJobs()
+	const QHash<unsigned int, QSharedPointer<Job>>& allJobs()
 	{
 		return m_jobList;
 	}
 
 	void cancelJob( const Position& pos );
+	void deleteJob( unsigned int jobID );
+	void deleteJobAt( const Position& pos );
 	void raisePrio( Position& pos );
 	void lowerPrio( Position& pos );
 };

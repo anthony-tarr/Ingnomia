@@ -29,25 +29,12 @@
 #include <QVariant>
 #include <QtGlobal>
 
-class FarmingManager;
-class Inventory;
-class ItemHistory;
-class StockpileManager;
-class World;
-class WorkshopManager;
-class JobManager;
-class RoomManager;
-class GnomeManager;
-class CreatureManager;
-//class KeyBindings;
-class EventManager;
+class EventConnector;
+class Util;
 class Logger;
-class MechanismManager;
-class FluidManager;
-class NeighborManager;
-class MilitaryManager;
-
-class SpriteFactory;
+class Selection;
+class NewGameSettings;
+class Config;
 
 class Global
 {
@@ -59,27 +46,12 @@ public:
 
 	static Logger& logger();
 
-	static Inventory& inv();
-	static ItemHistory& ih();
-	static JobManager& jm();
-	static StockpileManager& spm();
-	static FarmingManager& fm();
-	static WorkshopManager& wsm();
-	static World& w();
-	static SpriteFactory& sf();
-	static RoomManager& rm();
-	static GnomeManager& gm();
-	static CreatureManager& cm();
-	static EventManager& em();
-	static MechanismManager& mcm();
-	static FluidManager& flm();
-	static NeighborManager& nm();
-	static MilitaryManager& mil();
-
 	static QDomElement behaviorTree( QString id );
 
 	//static KeyBindings& keyBindings();
 	static bool wallsLowered;
+	static bool showDesignations;
+	static bool showJobs;
 	static bool showAxles;
 
 	static unsigned int waterSpriteUID;
@@ -95,6 +67,8 @@ public:
 	static int zWeight;
 	static double xpMod;
 	static bool debugMode;
+	static bool debugOpenGL;
+	static bool debugSound;
 
 	static QMap<QString, QSet<QString>> allowedInContainer;
 
@@ -112,25 +86,16 @@ public:
 
 	static Noesis::Key keyConvert( Qt::Key key );
 
+	static QSet<QString> craftable;
+
+	static EventConnector* eventConnector;
+	static Util* util;
+	static Selection* sel;
+	static NewGameSettings* newGameSettings;
+	static Config* cfg;
+
 private:
 	static Logger m_logger;
-
-	static Inventory m_inventory;
-	static ItemHistory m_itemHistory;
-	static JobManager m_jobManager;
-	static StockpileManager m_stockpileManager;
-	static FarmingManager m_farmingManager;
-	static WorkshopManager m_workshopManager;
-	static RoomManager m_roomManager;
-	static World m_world;
-	static SpriteFactory m_spriteFactory;
-	static GnomeManager m_gnomeManager;
-	static CreatureManager m_creatureManager;
-	static EventManager m_eventManager;
-	static MechanismManager m_mechanismManager;
-	static FluidManager m_fluidManager;
-	static NeighborManager m_neighborManager;
-	static MilitaryManager m_militaryManager;
 
 	//static KeyBindings m_keyBindings;
 

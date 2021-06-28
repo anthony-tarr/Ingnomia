@@ -73,13 +73,13 @@ public:
 	void setInJob( unsigned int job );
 	unsigned int isInContainer() const;
 	void setInContainer( unsigned int container );
+	unsigned int isHeldBy() const;
+	void setHeldBy( unsigned int creatureID );
+	unsigned int isUsedBy() const;
+	void setUsedBy( unsigned int creatureID );
 
-	// flag set when item is picked up and thus not on the ground
-	bool isPickedUp() const;
-	void setPickedUp( bool status );
-
-	bool isConstructedOrEquipped() const;
-	void setIsConstructedOrEquipped( bool value );
+	bool isConstructed() const;
+	void setIsConstructed( bool value );
 
 	unsigned char stackSize() const;
 
@@ -113,16 +113,19 @@ public:
 	unsigned int color() const;
 	void setColor( QString color );
 
+	bool isFree() const;
+
 private:
 	unsigned short m_materialUID = 0;
 	unsigned short m_itemUID     = 0;
 
-	bool m_isPickedUp    = false;
-	bool m_isConstructedOrEquipped = false; // double use of the flag, should be safe because no constructed item can be equipped and vice versa
+	bool m_isConstructed = false;
 
 	unsigned int m_isInStockpile = 0;
-	unsigned int m_isInJob       = 0;
 	unsigned int m_isInContainer = 0;
+	unsigned int m_isInJob       = 0;
+	unsigned int m_isHeldBy      = 0; // indicates the item is carried or equipped by a creature
+	unsigned int m_isUsedBy      = 0;
 
 	unsigned short m_value = 0;
 	unsigned int m_madeBy  = 0;

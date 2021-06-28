@@ -19,6 +19,8 @@
 
 #include "GameModel.h"
 
+#include "../aggregatorinventory.h"
+
 #include <QObject>
 
 class ProxyGameView : public QObject
@@ -39,18 +41,34 @@ public:
 	void requestMissionsUpdate();
 	void requestCreatureUpdate( unsigned int id );
 	void requestMilitaryUpdate();
+	void requestInventoryUpdate();
 
 	void sendEventAnswer( unsigned int eventID, bool answer );
+
+	void propagateEscape();
+
+	void setGameSpeed( GameSpeed speed );
+	void setPaused( bool paused );
+
+	void setRenderOptions( bool designations, bool jobs, bool walls, bool axels );
+
+	void setSelectionAction( QString action );
+
+	void requestBuildItems( BuildSelection buildSelection, QString category );
+	void requestCmdBuild( BuildItemType type, QString param, QString item, QStringList mats );
 
 private:
 	IngnomiaGUI::GameModel* m_parent = nullptr;
 
 private slots:
 	void onTimeAndDate( int minute, int hour, int day, QString season, int year, QString sunStatus );
+	void onKingdomInfo( QString name, QString info1, QString info2, QString info3 );
 	void onViewLevel( int level );
+	
+	void onHeartbeat( int value );
 
-	void onUpdatePause();
-	void onUpdateGameSpeed();
+	void onUpdatePause( bool value );
+	void onUpdateGameSpeed( GameSpeed speed );
 
 	void onShowTileInfo( unsigned int tileID );
 
@@ -62,6 +80,13 @@ private slots:
 
 	void onEvent( unsigned int id, QString title, QString msg, bool pause, bool yesno );
 
+	void onKeyEscape();
+	void onUpdateRenderOptions( bool designation, bool jobs, bool walls, bool axles );
+
+	void onBuildItems( const QList<GuiBuildItem>& items );
+
+	void onWatchList( const QList<GuiWatchedItem>& watchedItemList );
+
 signals:
 	void signalCloseStockpileWindow();
 	void signalCloseWorkshopWindow();
@@ -72,4 +97,15 @@ signals:
 	void signalRequestCreatureUpdate( unsigned int id );
 	void signalEventAnswer( unsigned int eventID, bool answer );
 	void signalRequestMilitaryUpdate();
+	void signalRequestInventoryUpdate();
+	void signalPropagateEscape();
+	void signalSetGameSpeed( GameSpeed speed );
+	void signalSetPaused( bool paused );
+	void signalSetRenderOptions( bool designations, bool jobs, bool walls, bool axles );
+
+	void signalRequestBuildItems( BuildSelection buildSelection, QString category );
+	void signalRequestCmdBuild( BuildItemType type, QString param, QString item, QStringList mats );
+	void signalSetSelectionAction( QString action );
+	
+	void signalHeartbeatResponse( int value );
 };

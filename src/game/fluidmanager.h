@@ -17,10 +17,13 @@
 */
 #pragma once
 
+
 #include "../base/position.h"
 #include "../game/job.h"
 
 #include <QSet>
+
+class Game;
 
 enum PipeType : unsigned char
 {
@@ -44,19 +47,17 @@ struct NetworkPipe
 	QList<Position> ins;
 	QList<Position> outs;
 
-	QVariantMap serialize();
+	QVariantMap serialize() const;
 	void deserialize( QVariantMap in );
 };
 
-class FluidManager
+class FluidManager : public QObject
 {
-
+	Q_OBJECT
+	Q_DISABLE_COPY_MOVE( FluidManager )
 public:
-	FluidManager();
+	FluidManager( Game* parent );
 	~FluidManager();
-
-	void reset();
-	void init();
 
 	QHash<unsigned int, NetworkPipe>& pipes()
 	{
@@ -76,16 +77,16 @@ public:
 
 	bool finishJob( unsigned int jobID );
 	bool giveBackJob( unsigned int jobID );
-	Job* getJob( unsigned int jobID );
-	bool hasJobID( unsigned int jobID );
+	QSharedPointer<Job> getJob( unsigned int jobID );
+	bool hasJobID( unsigned int jobID ) const;
 
 private:
+	QPointer<Game> g;
+
 	quint64 m_lastTick = 0;
 
 	QList<Position> m_inputs;
 	QList<Position> m_outputs;
 
 	QHash<unsigned int, NetworkPipe> m_allPipes;
-
-	QMutex m_mutex;
 };

@@ -220,4 +220,20 @@ namespace IngnomiaGUI
     public class NeighborsModel
     {
     }
+
+    public class InventoryModel
+    {
+    }
+
+    public class ColorToBrushConverter
+    {
+    }
+
+    public class ColorToBrushConverterDark
+    {
+    }
+
+    public class SelectionModel
+    {
+    }
 }

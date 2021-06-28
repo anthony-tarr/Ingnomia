@@ -23,24 +23,6 @@
 #include "../base/io.h"
 #include "../base/logger.h"
 #include "../base/util.h"
-#include "../game/creaturemanager.h"
-#include "../game/eventmanager.h"
-#include "../game/farmingmanager.h"
-#include "../game/fluidmanager.h"
-#include "../game/gnomemanager.h"
-#include "../game/inventory.h"
-#include "../game/itemhistory.h"
-#include "../game/jobmanager.h"
-#include "../game/mechanismmanager.h"
-#include "../game/militarymanager.h"
-#include "../game/neighbormanager.h"
-#include "../game/roommanager.h"
-#include "../game/stockpilemanager.h"
-#include "../game/workshopmanager.h"
-#include "../game/world.h"
-#include "../gfx/spritefactory.h"
-
-//#include "../gui/keybindings.h"
 
 #include <QDebug>
 #include <QFile>
@@ -48,30 +30,18 @@
 #include <QJsonDocument>
 #include <QStandardPaths>
 
+EventConnector* Global::eventConnector = nullptr;
+Util* Global::util = nullptr;
+Selection* Global::sel = nullptr;
+NewGameSettings* Global::newGameSettings = nullptr;
+Config* Global::cfg = nullptr;
+
 Logger Global::m_logger;
-Inventory Global::m_inventory;
-ItemHistory Global::m_itemHistory;
-JobManager Global::m_jobManager;
-StockpileManager Global::m_stockpileManager;
-FarmingManager Global::m_farmingManager;
-WorkshopManager Global::m_workshopManager;
-World Global::m_world;
-SpriteFactory Global::m_spriteFactory;
-RoomManager Global::m_roomManager;
-GnomeManager Global::m_gnomeManager;
-CreatureManager Global::m_creatureManager;
-EventManager Global::m_eventManager;
-MechanismManager Global::m_mechanismManager;
-FluidManager Global::m_fluidManager;
-NeighborManager Global::m_neighborManager;
-MilitaryManager Global::m_militaryManager;
-
-//KeyBindings Global::m_keyBindings;
-
 
 bool Global::wallsLowered = false;
 bool Global::showAxles    = false;
-
+bool Global::showDesignations = true;
+bool Global::showJobs = true;
 
 unsigned int Global::waterSpriteUID  = 0;
 unsigned int Global::undiscoveredUID = 0;
@@ -84,15 +54,17 @@ QMap<QString, QSet<QString>> Global::allowedInContainer;
 
 QHash<Qt::Key, Noesis::Key> Global::keyConvertMap;
 
-int Global::dimX     = 0;
-int Global::dimY     = 0;
-int Global::dimZ     = 0;
+int Global::dimX     = 100;
+int Global::dimY     = 100;
+int Global::dimZ     = 100;
 
 int Global::zWeight = 20;
 
 double Global::xpMod = 250.;
 
 bool Global::debugMode = false;
+bool Global::debugOpenGL = false;
+bool Global::debugSound = false;
 
 QMap<QString, QDomElement> Global::m_behaviorTrees;
 
@@ -104,41 +76,18 @@ unsigned int Global::dirtUID = 0;
 QMap<QString, CreaturePart> Global::creaturePartLookUp;
 QMap<CreaturePart, QString> Global::creaturePartToString;
 
+QSet<QString> Global::craftable;
+
 void Global::reset()
 {
 	qDebug() << "*** Global reset";
-	DB::resetLiveTables();
-
-	DB::select( "Value_", "Time", "TicksPerMinute" ).toInt();
-	Util::ticksPerMinute = DB::select( "Value_", "Time", "TicksPerMinute" ).toInt();
-	Util::minutesPerHour = DB::select( "Value_", "Time", "MinutesPerHour" ).toInt();
-	Util::hoursPerDay    = DB::select( "Value_", "Time", "HoursPerDay" ).toInt();
-	Util::ticksPerDay    = Util::ticksPerMinute * Util::minutesPerHour * Util::hoursPerDay;
-
-	Util::daysPerSeason = DB::select( "NumDays", "Seasons", 1 ).toInt();
 
 	GameState::stockOverlay.clear();
 	GameState::squads.clear();
 
-	Global::xpMod = Config::getInstance().get( "XpMod" ).toDouble();
+	Global::xpMod = Global::cfg->get( "XpMod" ).toDouble();
 
 	m_logger.reset();
-	m_inventory.reset();
-	m_itemHistory.reset();
-	m_jobManager.reset();
-	m_stockpileManager.reset();
-	m_farmingManager.reset();
-	m_workshopManager.reset();
-	m_world.reset();
-	m_gnomeManager.reset();
-	m_roomManager.reset();
-	m_stockpileManager.reset();
-	m_creatureManager.reset();
-	m_eventManager.reset();
-	m_mechanismManager.reset();
-	m_fluidManager.reset();
-	m_neighborManager.reset();
-	m_militaryManager.reset();
 
 	wallsLowered = false;
 	showAxles    = false;
@@ -148,7 +97,7 @@ void Global::reset()
 	if ( !loadBehaviorTrees() )
 	{
 		qCritical() << "failed to load behavior trees";
-		exit( 0 );
+		abort();
 	}
 
 	needIDs.clear();
@@ -166,7 +115,7 @@ void Global::reset()
 
 	Global::dirtUID = DBH::materialUID( "Dirt" );
 
-	Config::getInstance().set( "renderCreatures", true );
+	Global::cfg->set( "renderCreatures", true );
 
 	creaturePartLookUp.insert( "Head", CP_HEAD );
 	creaturePartLookUp.insert( "Torso", CP_TORSO );
@@ -265,91 +214,18 @@ void Global::reset()
 	creaturePartToString.insert( CP_ARMOR_HAND, "HandArmor" );
 	creaturePartToString.insert( CP_ARMOR_FOOT, "FootArmor" );
 	creaturePartToString.insert( CP_ARMOR_LEG, "LegArmor" );
+
+	craftable.clear();
+	auto rows = DB::selectRows( "Crafts" );
+	for( const auto& row : rows )
+	{
+		craftable.insert( row.value( "ItemID" ).toString() );
+	}
 }
 
 Logger& Global::logger()
 {
 	return m_logger;
-}
-
-Inventory& Global::inv()
-{
-	return m_inventory;
-}
-
-ItemHistory& Global::ih()
-{
-	return m_itemHistory;
-}
-
-JobManager& Global::jm()
-{
-	return m_jobManager;
-}
-
-StockpileManager& Global::spm()
-{
-	return m_stockpileManager;
-}
-
-FarmingManager& Global::fm()
-{
-	return m_farmingManager;
-}
-
-WorkshopManager& Global::wsm()
-{
-	return m_workshopManager;
-}
-
-World& Global::w()
-{
-	return m_world;
-}
-
-SpriteFactory& Global::sf()
-{
-	return m_spriteFactory;
-}
-
-RoomManager& Global::rm()
-{
-	return m_roomManager;
-}
-
-GnomeManager& Global::gm()
-{
-	return m_gnomeManager;
-}
-
-CreatureManager& Global::cm()
-{
-	return m_creatureManager;
-}
-
-EventManager& Global::em()
-{
-	return m_eventManager;
-}
-
-MechanismManager& Global::mcm()
-{
-	return m_mechanismManager;
-}
-
-FluidManager& Global::flm()
-{
-	return m_fluidManager;
-}
-
-NeighborManager& Global::nm()
-{
-	return m_neighborManager;
-}
-
-MilitaryManager& Global::mil()
-{
-	return m_militaryManager;
 }
 
 /*
@@ -369,7 +245,7 @@ bool Global::loadBehaviorTrees()
 
 		QDomDocument xml;
 		// Load xml file as raw data
-		QFile f( Config::getInstance().get( "dataPath" ).toString() + "/ai/" + xmlName );
+		QFile f( Global::cfg->get( "dataPath" ).toString() + "/ai/" + xmlName );
 		if ( !f.open( QIODevice::ReadOnly ) )
 		{
 			// Error while loading file

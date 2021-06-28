@@ -19,13 +19,10 @@
 #include "mainwindow.h"
 
 #include "../base/config.h"
-#include "../base/global.h"
 #include "../base/io.h"
-#include "../base/selection.h"
-#include "../base/tile.h"
-#include "../game/gamemanager.h"
-#include "../game/world.h"
 #include "../gui/eventconnector.h"
+#include "../gui/aggregatorselection.h"
+
 #include "license.h"
 #include "mainwindowrenderer.h"
 #include "xaml/GameGui.xaml.h"
@@ -53,6 +50,12 @@
 #include "xaml/creatureinfomodel.h"
 #include "xaml/debug.xaml.h"
 #include "xaml/debugmodel.h"
+#include "xaml/inventory.xaml.h"
+#include "xaml/inventorymodel.h"
+#include "xaml/selection.xaml.h"
+#include "xaml/selectionmodel.h"
+
+
 #include "xaml/military.xaml.h"
 #include "xaml/militarymodel.h"
 #include "xaml/neighbors.xaml.h"
@@ -60,6 +63,8 @@
 #include "xaml/stockpilegui.xaml.h"
 #include "xaml/workshopgui.xaml.h"
 #include "xaml/workshopmodel.h"
+
+#include "xaml/converters.h"
 
 #include <NsApp/Launcher.h>
 #include <NsApp/LocalFontProvider.h>
@@ -72,14 +77,8 @@
 #include <NsGui/IntegrationAPI.h>
 #include <NsRender/GLFactory.h>
 
-#include <QApplication>
-#include <QCoreApplication>
 #include <QDebug>
-#include <QDesktopWidget>
-#include <QFile>
-#include <QImage>
 #include <QKeyEvent>
-#include <QMessageBox>
 #include <QMouseEvent>
 #include <QTimer>
 
@@ -93,10 +92,25 @@ MainWindow::MainWindow( QWidget* parent ) :
 	QOpenGLWindow()
 {
 	qDebug() << "Create main window.";
-	connect( &EventConnector::getInstance(), &EventConnector::signalExit, this, &MainWindow::onExit );
-	connect( this, &MainWindow::signalWindowSize, &EventConnector::getInstance(), &EventConnector::onWindowSize );
-	connect( this, &MainWindow::signalViewLevel, &EventConnector::getInstance(), &EventConnector::onViewLevel );
-	connect( this, &MainWindow::signalSelectTile, EventConnector::getInstance().aggregatorTileInfo(), &AggregatorTileInfo::onShowTileInfo );
+	connect( Global::eventConnector, &EventConnector::signalExit, this, &MainWindow::onExit );
+	connect( this, &MainWindow::signalWindowSize, Global::eventConnector, &EventConnector::onWindowSize );
+	connect( this, &MainWindow::signalViewLevel, Global::eventConnector, &EventConnector::onViewLevel );
+	connect( this, &MainWindow::signalKeyPress, Global::eventConnector, &EventConnector::onKeyPress );
+	connect( this, &MainWindow::signalTogglePause, Global::eventConnector, &EventConnector::onTogglePause );
+	connect( this, &MainWindow::signalUpdateRenderOptions, Global::eventConnector, &EventConnector::onUpdateRenderOptions );
+		
+	connect( this, &MainWindow::signalMouse, Global::eventConnector->aggregatorSelection(), &AggregatorSelection::onMouse, Qt::QueuedConnection );
+	connect( this, &MainWindow::signalLeftClick, Global::eventConnector->aggregatorSelection(), &AggregatorSelection::onLeftClick, Qt::QueuedConnection );
+	connect( this, &MainWindow::signalRightClick, Global::eventConnector->aggregatorSelection(), &AggregatorSelection::onRightClick, Qt::QueuedConnection );
+	connect( this, &MainWindow::signalRotateSelection, Global::eventConnector->aggregatorSelection(), &AggregatorSelection::onRotateSelection, Qt::QueuedConnection );
+	connect( this, &MainWindow::signalRenderParams, Global::eventConnector->aggregatorSelection(), &AggregatorSelection::onRenderParams, Qt::QueuedConnection );
+
+	connect( Global::eventConnector->aggregatorDebug(), &AggregatorDebug::signalSetWindowSize, this, &MainWindow::onSetWindowSize, Qt::QueuedConnection );
+
+	connect( Global::eventConnector->aggregatorSettings(), &AggregatorSettings::signalFullScreen, this, &MainWindow::onFullScreen, Qt::QueuedConnection );
+
+	connect( Global::eventConnector, &EventConnector::signalInitView, this, &MainWindow::onInitViewAfterLoad, Qt::QueuedConnection );
+
 	instance = this;
 }
 
@@ -104,11 +118,14 @@ MainWindow::~MainWindow()
 {
 	qDebug() << "MainWindow destructor";
 
-	Config::getInstance().set( "WindowWidth", this->width() );
-	Config::getInstance().set( "WindowHeight", this->height() );
-	Config::getInstance().set( "WindowPosX", this->position().x() );
-	Config::getInstance().set( "WindowPosY", this->position().y() );
-
+	if( !m_isFullScreen )
+	{
+		Global::cfg->set( "WindowWidth", this->width() );
+		Global::cfg->set( "WindowHeight", this->height() );
+		Global::cfg->set( "WindowPosX", this->position().x() );
+		Global::cfg->set( "WindowPosY", this->position().y() );
+	}
+	
 	IO::saveConfig();
 	instance = nullptr;
 }
@@ -126,30 +143,54 @@ void MainWindow::onExit()
 void MainWindow::toggleFullScreen()
 {
 	QOpenGLWindow* w = this;
-	if ( !m_isFullScreen )
+	m_isFullScreen = !m_isFullScreen;
+	if ( m_isFullScreen )
 	{
-		qDebug() << "go to fullscreen";
 		w->showFullScreen();
-		m_isFullScreen = true;
+		Global::cfg->set( "fullscreen", true );
 	}
 	else
 	{
 		// Reset from fullscreen:
-		qDebug() << "back from fullscreen";
 		w->showNormal();
-		m_isFullScreen = false;
+		Global::cfg->set( "fullscreen", false );
 	}
 	m_renderer->onRenderParamsChanged();
+	emit signalRenderParams( width(), height(), m_renderer->moveX(), m_renderer->moveY(), m_renderer->scale(), m_renderer->rotation() );
+}
+
+void MainWindow::onFullScreen( bool value )
+{
+	QOpenGLWindow* w = this;
+	m_isFullScreen = value;
+	Global::cfg->set( "fullscreen", value );
+	if ( value )
+	{
+		w->showFullScreen();
+	}
+	else
+	{
+		// Reset from fullscreen:
+		w->showNormal();
+	}
+	m_renderer->onRenderParamsChanged();
+	emit signalRenderParams( width(), height(), m_renderer->moveX(), m_renderer->moveY(), m_renderer->scale(), m_renderer->rotation() );
 }
 
 void MainWindow::keyPressEvent( QKeyEvent* event )
 {
-	auto noesisKey = Global::keyConvert( (Qt::Key)event->key() );
+	int qtKey = event->key();
+	auto noesisKey = Global::keyConvert( (Qt::Key)qtKey );
 	//qDebug() << "keyPressEvent" << event->key() << " " << event->text() << noesisKey;
 
-	bool ret = m_view->KeyDown( noesisKey );
+	bool ret = false;
+	
+	if( qtKey != 32 )
+	{
+		ret = m_view->KeyDown( noesisKey );
+	}
 
-	if ( event->key() > 32 && event->key() < 256 )
+	if ( event->key() > 31 && event->key() < 256 )
 	{
 		if ( event->text().size() == 1 )
 		{
@@ -157,10 +198,10 @@ void MainWindow::keyPressEvent( QKeyEvent* event )
 			ret |= m_view->Char( c.unicode() );
 		}
 	}
-
+	
 	if ( ret )
 	{
-		noesisTick();
+		idleRenderTick();
 	}
 
 	if ( !ret )
@@ -169,29 +210,35 @@ void MainWindow::keyPressEvent( QKeyEvent* event )
 		{
 			case Qt::Key_H:
 				Global::wallsLowered = !Global::wallsLowered;
-				m_renderer->onRenderParamsChanged();
+				emit signalUpdateRenderOptions();
 				break;
 			case Qt::Key_K:
 				break;
-			case Qt::Key_D:
+			case Qt::Key_O:
 				if ( event->modifiers() & Qt::ControlModifier )
 				{
 					Global::debugMode = !Global::debugMode;
 				}
 				else
 				{
-					auto& config = Config::getInstance();
-					config.set( "overlay", !config.get( "overlay" ).toBool() );
+					Global::showDesignations = !Global::showDesignations;
+					emit signalUpdateRenderOptions();
 				}
 				m_renderer->onRenderParamsChanged();
 				break;
 			case Qt::Key_F:
-				toggleFullScreen();
+				//toggleFullScreen();
 				break;
 			case Qt::Key_R:
-				Selection::getInstance().rotate();
-				Selection::getInstance().updateSelection( m_cursorPos, false, false );
-				redraw();
+				if ( event->modifiers() & Qt::ControlModifier )
+				{
+					Global::debugOpenGL = !Global::debugOpenGL;
+				}
+				else
+				{
+					emit signalRotateSelection();
+					redraw();
+				}
 				break;
 			case Qt::Key_Comma:
 				m_renderer->rotate( 1 );
@@ -199,7 +246,35 @@ void MainWindow::keyPressEvent( QKeyEvent* event )
 			case Qt::Key_Period:
 				m_renderer->rotate( -1 );
 				break;
+			case Qt::Key_Escape:
+				emit signalKeyPress( event->key() );
+				break;
+			case Qt::Key_Space:
+				emit signalTogglePause();
+				break;
+			case Qt::Key_W:
+				keyboardMove();
+				m_keyboardMove += KeyboardMove::Up;
+				redraw();
+				break;
+			case Qt::Key_S:
+				keyboardMove();
+				m_keyboardMove += KeyboardMove::Down;
+				redraw();
+				break;
+			case Qt::Key_A:
+				keyboardMove();
+				m_keyboardMove += KeyboardMove::Left;
+				redraw();
+				break;
+			case Qt::Key_D:
+				keyboardMove();
+				m_keyboardMove += KeyboardMove::Right;
+				redraw();
+				break;
 		}
+		emit signalRenderParams( width(), height(), m_renderer->moveX(), m_renderer->moveY(), m_renderer->scale(), m_renderer->rotation() );
+		emit signalMouse( m_mouseX, m_mouseY, event->modifiers() & Qt::ShiftModifier, event->modifiers() & Qt::ControlModifier );
 	}
 }
 
@@ -209,8 +284,34 @@ void MainWindow::keyReleaseEvent( QKeyEvent* event )
 	//qDebug() << "keyReleaseEvent" << event->key() << " " << event->text() << noesisKey;
 	if ( m_view->KeyUp( noesisKey ) )
 	{
-		noesisTick();
+		idleRenderTick();
 	}
+
+	switch ( event->key() )
+	{
+		case Qt::Key_W:
+			keyboardMove();
+			m_keyboardMove -= KeyboardMove::Up;
+			redraw();
+			break;
+		case Qt::Key_S:
+			keyboardMove();
+			m_keyboardMove -= KeyboardMove::Down;
+			redraw();
+			break;
+		case Qt::Key_A:
+			keyboardMove();
+			m_keyboardMove -= KeyboardMove::Left;
+			redraw();
+			break;
+		case Qt::Key_D:
+			keyboardMove();
+			m_keyboardMove -= KeyboardMove::Right;
+			redraw();
+			break;
+	}
+	emit signalRenderParams( width(), height(), m_renderer->moveX(), m_renderer->moveY(), m_renderer->scale(), m_renderer->rotation() );
+	emit signalMouse( m_mouseX, m_mouseY, event->modifiers() & Qt::ShiftModifier, event->modifiers() & Qt::ControlModifier );
 }
 
 bool MainWindow::isOverGui( int x, int y )
@@ -222,19 +323,51 @@ bool MainWindow::isOverGui( int x, int y )
 	return hit.visualHit;
 }
 
+void MainWindow::keyboardMove()
+{
+	int x = 0;
+	int y = 0;
+	if( (bool)( m_keyboardMove & KeyboardMove::Up ) ) y -= 1;
+	if( (bool)( m_keyboardMove & KeyboardMove::Down ) ) y += 1;
+	if( (bool)( m_keyboardMove & KeyboardMove::Left ) ) x -= 1;
+	if( (bool)( m_keyboardMove & KeyboardMove::Right ) ) x += 1;
+
+	// Elapsed time in second
+	const float elapsedTime = m_keyboardMovementTimer.nsecsElapsed() * 0.000000001f;
+	m_keyboardMovementTimer.restart();
+
+	if( m_renderer && (x || y) )
+	{
+		const float keyboardMoveSpeed = (Global::cfg->get( "keyboardMoveSpeed" ).toFloat() + 50.f) * 4.f;
+
+		float moveX = -x * keyboardMoveSpeed * elapsedTime;
+		float moveY = -y * keyboardMoveSpeed * elapsedTime;
+
+		if (x && y)
+		{
+			moveX /= sqrt( 2 );
+			moveY /= sqrt( 2 );
+		}
+
+		m_renderer->move( moveX, moveY );
+		emit signalRenderParams( width(), height(), m_renderer->moveX(), m_renderer->moveY(), m_renderer->scale(), m_renderer->rotation() );
+	}
+}
+
 void MainWindow::mouseMoveEvent( QMouseEvent* event )
 {
+	auto gp = this->mapFromGlobal( event->globalPos() );
 	if ( m_view )
 	{
 		// Mouse movement needs to be handled by both Qt and Noesis, to correctly handle ongoing mouse gestures
-		if ( m_view->MouseMove( event->x(), event->y() ) )
+		if ( m_view->MouseMove( gp.x(), gp.y() ) )
 		{
-			noesisTick();
+			idleRenderTick();
 		}
 
 		if ( event->buttons() & Qt::LeftButton && m_leftDown )
 		{
-			if ( ( abs( event->x() - m_clickX ) > 5 || abs( event->y() - m_clickY ) > 5 ) && !m_isMove )
+			if ( ( abs( gp.x() - m_clickX ) > 5 || abs( gp.y() - m_clickY ) > 5 ) && !m_isMove )
 			{
 				m_isMove = true;
 				m_moveX  = m_clickX;
@@ -243,11 +376,12 @@ void MainWindow::mouseMoveEvent( QMouseEvent* event )
 
 			if ( m_isMove )
 			{
-				m_renderer->move( event->x() - m_moveX, event->y() - m_moveY );
+				m_renderer->move( gp.x() - m_moveX, gp.y() - m_moveY );
 
-				m_moveX = event->x();
-				m_moveY = event->y();
+				m_moveX = gp.x();
+				m_moveY = gp.y();
 			}
+			emit signalRenderParams( width(), height(), m_renderer->moveX(), m_renderer->moveY(), m_renderer->scale(), m_renderer->rotation() );
 		}
 		else
 		{
@@ -255,37 +389,45 @@ void MainWindow::mouseMoveEvent( QMouseEvent* event )
 		}
 	}
 
-	QPoint gp = this->mapFromGlobal( event->globalPos() );
 	m_mouseX  = gp.x();
 	m_mouseY  = gp.y();
 
-	if ( Selection::getInstance().hasAction() )
-	{
-		m_cursorPos = m_renderer->calcCursor( m_mouseX, m_mouseY, event->modifiers() & Qt::ShiftModifier );
-		Selection::getInstance().updateSelection( m_cursorPos, event->modifiers() & Qt::ShiftModifier, event->modifiers() & Qt::ControlModifier );
-		Selection::getInstance().setControlActive( event->modifiers() & Qt::ControlModifier );
-		redraw();
-	}
+
+	emit signalMouse( m_mouseX, m_mouseY, event->modifiers() & Qt::ShiftModifier, event->modifiers() & Qt::ControlModifier );
+
+	redraw();
+}
+
+void MainWindow::onInitViewAfterLoad()
+{
+	m_renderer->setScale( 1.0 );
+	m_moveX = GameState::moveX;
+	m_moveY = GameState::moveY;
+	m_renderer->move( m_moveX, m_moveY );
+	
+	m_renderer->setScale( GameState::scale );
+	emit signalRenderParams( width(), height(), m_renderer->moveX(), m_renderer->moveY(), m_renderer->scale(), m_renderer->rotation() );
 }
 
 void MainWindow::mousePressEvent( QMouseEvent* event )
 {
 	//qDebug() << "mousePressEvent";
+	auto gp = this->mapFromGlobal( event->globalPos() );
 	if ( event->button() & Qt::LeftButton )
 	{
 		if ( m_view )
 		{
-			if ( isOverGui( event->x(), event->y() ) )
+			if ( isOverGui( gp.x(), gp.y() ) )
 			{
-				if ( m_view->MouseButtonDown( event->x(), event->y(), Noesis::MouseButton::MouseButton_Left ) )
+				if ( m_view->MouseButtonDown( gp.x(), gp.y(), Noesis::MouseButton::MouseButton_Left ) )
 				{
-					noesisTick();
+					idleRenderTick();
 				}
 			}
 			else
 			{
-				m_clickX   = event->x();
-				m_clickY   = event->y();
+				m_clickX   = gp.x();
+				m_clickY   = gp.y();
 				m_isMove   = false;
 				m_leftDown = true;
 			}
@@ -295,11 +437,11 @@ void MainWindow::mousePressEvent( QMouseEvent* event )
 	{
 		if ( m_view )
 		{
-			if ( isOverGui( event->x(), event->y() ) )
+			if ( isOverGui( gp.x(), gp.y() ) )
 			{
-				if ( m_view->MouseButtonDown( event->x(), event->y(), Noesis::MouseButton::MouseButton_Right ) )
+				if ( m_view->MouseButtonDown( gp.x(), gp.y(), Noesis::MouseButton::MouseButton_Right ) )
 				{
-					noesisTick();
+					idleRenderTick();
 				}
 			}
 			else
@@ -317,36 +459,21 @@ void MainWindow::mouseReleaseEvent( QMouseEvent* event )
 	{
 		if ( m_view )
 		{
-			if ( isOverGui( event->x(), event->y() ) || !m_leftDown )
+			auto gp = this->mapFromGlobal( event->globalPos() );
+			if ( isOverGui( gp.x(), gp.y() ) || !m_leftDown )
 			{
-				if ( m_view->MouseButtonUp( event->x(), event->y(), Noesis::MouseButton::MouseButton_Left ) )
+				if ( m_view->MouseButtonUp( gp.x(), gp.y(), Noesis::MouseButton::MouseButton_Left ) )
 				{
-					noesisTick();
+					idleRenderTick();
 				}
 			}
 			else
 			{
 				if ( !m_isMove && m_leftDown )
 				{
-					m_cursorPos = m_renderer->calcCursor( m_mouseX, m_mouseY, event->modifiers() & Qt::ShiftModifier );
-					if ( Selection::getInstance().hasAction() )
-					{
-						if ( Selection::getInstance().leftClick( m_cursorPos, event->modifiers() & Qt::ShiftModifier, event->modifiers() & Qt::ControlModifier ) )
-						{
-							// open info windows after creating something
-						}
-						redraw();
-					}
-					else
-					{
-						//open tile info or do other game related stuff
-						if ( m_cursorPos.x < 0 || m_cursorPos.y < 0 || m_cursorPos.x > Global::dimX - 1 || m_cursorPos.y > Global::dimX - 1 || m_cursorPos.z < 0 || m_cursorPos.z > Global::dimZ - 1 )
-						{
-							//return;
-						}
-						unsigned int tileID = m_cursorPos.toInt();
-						emit signalSelectTile( tileID );
-					}
+					emit signalMouse( m_mouseX, m_mouseY, event->modifiers() & Qt::ShiftModifier, event->modifiers() & Qt::ControlModifier );
+					emit signalLeftClick( event->modifiers() & Qt::ShiftModifier, event->modifiers() & Qt::ControlModifier );
+					redraw();
 				}
 			}
 			m_isMove   = false;
@@ -357,22 +484,19 @@ void MainWindow::mouseReleaseEvent( QMouseEvent* event )
 	{
 		if ( m_view )
 		{
-			if ( isOverGui( event->x(), event->y() ) || !m_rightDown )
+			auto gp = this->mapFromGlobal( event->globalPos() );
+			if ( isOverGui( gp.x(), gp.y() ) || !m_rightDown )
 			{
-				if ( m_view->MouseButtonUp( event->x(), event->y(), Noesis::MouseButton::MouseButton_Right ) )
+				if ( m_view->MouseButtonUp( gp.x(), gp.y(), Noesis::MouseButton::MouseButton_Right ) )
 				{
-					noesisTick();
+					idleRenderTick();
 				}
 			}
 			else
 			{
-				if ( Selection::getInstance().hasAction() )
-				{
-					m_cursorPos = m_renderer->calcCursor( m_mouseX, m_mouseY, event->modifiers() & Qt::ShiftModifier );
-					Selection::getInstance().rightClick( m_cursorPos );
-					m_selectedAction = Selection::getInstance().action();
-					redraw();
-				}
+				emit signalMouse( m_mouseX, m_mouseY, event->modifiers() & Qt::ShiftModifier, event->modifiers() & Qt::ControlModifier );
+				emit signalRightClick();
+				redraw();
 				m_rightDown = false;
 			}
 		}
@@ -384,16 +508,17 @@ void MainWindow::wheelEvent( QWheelEvent* event )
 	QWheelEvent* wEvent = event; //dynamic_cast<QWheelEvent*>( event );
 	if ( m_view )
 	{
-		if ( isOverGui( event->x(), event->y() ) )
+		auto gp = this->mapFromGlobal( event->globalPos() );
+		if ( isOverGui( gp.x(), gp.y() ) )
 		{
-			if ( m_view->MouseWheel( event->x(), event->y(), wEvent->delta() ) )
+			if ( m_view->MouseWheel( gp.x(), gp.y(), wEvent->delta() ) )
 			{
-				noesisTick();
+				idleRenderTick();
 			}
 		}
 		else
 		{
-			if ( wEvent->modifiers() & Qt::ControlModifier )
+			if ( (bool)( wEvent->modifiers() & Qt::ControlModifier ) ^ Global::cfg->get( "toggleMouseWheel" ).toBool() ) 
 			{
 				// Scale the view / do the zoom
 				auto delta = wEvent->delta();
@@ -411,6 +536,7 @@ void MainWindow::wheelEvent( QWheelEvent* event )
 				}
 			}
 		}
+		emit signalRenderParams( width(), height(), m_renderer->moveX(), m_renderer->moveY(), m_renderer->scale(), m_renderer->rotation() );
 	}
 }
 
@@ -419,7 +545,7 @@ void MainWindow::focusInEvent( QFocusEvent* e )
 	if ( m_view )
 	{
 		m_view->Activate();
-		noesisTick();
+		idleRenderTick();
 	}
 }
 
@@ -428,48 +554,35 @@ void MainWindow::focusOutEvent( QFocusEvent* e )
 	if ( m_view )
 	{
 		m_view->Deactivate();
-		noesisTick();
+		idleRenderTick();
 	}
 }
 
 void MainWindow::keyboardZPlus( bool shift, bool ctrl )
 {
 	int dimZ      = Global::dimZ - 1;
-	int viewLevel = Config::getInstance().get( "viewLevel" ).toInt();
-	viewLevel += 1;
-	viewLevel = qMax( 0, qMin( dimZ, viewLevel ) );
-	Config::getInstance().set( "viewLevel", viewLevel );
+	GameState::viewLevel += 1;
+	GameState::viewLevel = qMax( 0, qMin( dimZ, GameState::viewLevel ) );
 
 	m_renderer->onRenderParamsChanged();
-	emit signalViewLevel( viewLevel );
+	emit signalRenderParams( width(), height(), m_renderer->moveX(), m_renderer->moveY(), m_renderer->scale(), m_renderer->rotation() );
+	emit signalViewLevel( GameState::viewLevel );
 
-	if ( Selection::getInstance().hasAction() )
-	{
-		m_cursorPos = m_renderer->calcCursor( m_mouseX, m_mouseY, shift );
-		Selection::getInstance().updateSelection( m_cursorPos, shift, ctrl );
-		Selection::getInstance().setControlActive( ctrl );
-		redraw();
-	}
+	emit signalMouse( m_mouseX, m_mouseY, shift, ctrl );
+	redraw();
 }
 
 void MainWindow::keyboardZMinus( bool shift, bool ctrl )
 {
 	int dimZ      = Global::dimZ - 1;
-	int viewLevel = Config::getInstance().get( "viewLevel" ).toInt();
-	viewLevel -= 1;
-	viewLevel = qMax( 0, qMin( dimZ, viewLevel ) );
-	Config::getInstance().set( "viewLevel", viewLevel );
+	GameState::viewLevel -= 1;
+	GameState::viewLevel = qMax( 0, qMin( dimZ, GameState::viewLevel ) );
 
 	m_renderer->onRenderParamsChanged();
-	emit signalViewLevel( viewLevel );
-
-	if ( Selection::getInstance().hasAction() )
-	{
-		m_cursorPos = m_renderer->calcCursor( m_mouseX, m_mouseY, shift );
-		Selection::getInstance().updateSelection( m_cursorPos, shift, ctrl );
-		Selection::getInstance().setControlActive( ctrl );
-		redraw();
-	}
+	emit signalViewLevel( GameState::viewLevel );
+	emit signalRenderParams( width(), height(), m_renderer->moveX(), m_renderer->moveY(), m_renderer->scale(), m_renderer->rotation() );
+	emit signalMouse( m_mouseX, m_mouseY, shift, ctrl );
+	redraw();
 }
 
 void MainWindow::noesisInit()
@@ -498,6 +611,7 @@ void MainWindow::noesisInit()
 
 	Noesis::GUI::SetLogHandler( logHandler );
 	Noesis::GUI::SetErrorHandler( errorHandler );
+	Noesis::GUI::DisableInspector();
 
 	// Noesis initialization. This must be the first step before using any NoesisGUI functionality
 	Noesis::GUI::Init( licenseName, licenseKey );
@@ -533,18 +647,17 @@ bool MainWindow::noesisUpdate()
 	// See if anything needs to be animated
 	if ( m_view->Update( timeDiff.count() ) )
 	{
-		// If necessary, actually update
-		if ( m_view->GetRenderer()->UpdateRenderTree() )
-		{
-			return true;
-		}
+		return true;
 	}
 	return false;
 }
 
-void MainWindow::noesisTick()
+void MainWindow::idleRenderTick()
 {
+	// Check for ongoing keyboard movement
+	keyboardMove();
 
+	// Check if redraw is required
 	if ( noesisUpdate() && !m_pendingUpdate )
 	{
 		// Trigger rendering
@@ -554,16 +667,24 @@ void MainWindow::noesisTick()
 	else
 	{
 		// check again later
-		m_timer->start( 50 );
+		m_timer->start( 20 );
 	}
 }
 
 void MainWindow::paintGL()
 {
+	// Apply latest position
+	keyboardMove();
+
+	// Get the GPU busy
+	m_renderer->paintWorld();
+
 	// Trigger noesis updates again, to avoid "stuttering UI"
 	noesisUpdate();
 
 	// Offscreen rendering phase populates textures needed by the on-screen rendering
+	// If necessary, actually update
+	m_view->GetRenderer()->UpdateRenderTree();
 
 	// If you are going to render here with your own engine you need to restore the GPU state
 	// because noesis changes it. In this case only framebuffer and viewport need to be restored
@@ -571,14 +692,13 @@ void MainWindow::paintGL()
 	{
 		// Restore state managed by QOpenGLWindow
 		makeCurrent();
+		context()->functions()->glViewport( 0, 0, this->width() * devicePixelRatioF(), this->height() * devicePixelRatioF() );
 	}
-
-	m_renderer->paintWorld();
 
 	// Rendering is done in the active framebuffer
 	m_view->GetRenderer()->Render();
 
-	m_timer->start( 50 );
+	m_timer->start( 0 );
 	m_pendingUpdate = false;
 }
 
@@ -586,8 +706,11 @@ void MainWindow::resizeGL( int w, int h )
 {
 	QOpenGLWindow::resizeGL( w, h );
 
-	Config::getInstance().set( "WindowWidth", w );
-	Config::getInstance().set( "WindowHeight", h );
+	if( !m_isFullScreen )
+	{
+		Global::cfg->set( "WindowWidth", w );
+		Global::cfg->set( "WindowHeight", h );
+	}
 
 	if ( m_view )
 	{
@@ -595,9 +718,16 @@ void MainWindow::resizeGL( int w, int h )
 	}
 	m_renderer->resize( this->width(), this->height() );
 
+	context()->functions()->glViewport( 0, 0, this->width() * devicePixelRatioF(), this->height() * devicePixelRatioF() );
+
 	emit signalWindowSize( this->width(), this->height() );
 
 	update();
+}
+
+void MainWindow::onSetWindowSize( int width, int height )
+{
+	this->resize( width, height );
 }
 
 void MainWindow::redraw()
@@ -614,12 +744,12 @@ void MainWindow::initializeGL()
 {
 	QOpenGLWindow::initializeGL();
 
-	noesisInit();
-	m_timer = new QTimer( this );
-	connect( m_timer, &QTimer::timeout, this, &MainWindow::noesisTick );
-
 	m_renderer = new MainWindowRenderer( this );
 	m_renderer->initializeGL();
+
+	noesisInit();
+	m_timer = new QTimer( this );
+	connect( m_timer, &QTimer::timeout, this, &MainWindow::idleRenderTick );
 
 	update();
 }
@@ -631,7 +761,7 @@ MainWindowRenderer* MainWindow::renderer()
 
 void MainWindow::installResourceProviders()
 {
-	const std::string contentPath = Config::getInstance().get( "dataPath" ).toString().toStdString() + "/xaml/";
+	const std::string contentPath = Global::cfg->get( "dataPath" ).toString().toStdString() + "/xaml/";
 	Noesis::GUI::SetXamlProvider( Noesis::MakePtr<NoesisApp::LocalXamlProvider>( contentPath.c_str() ) );
 	Noesis::GUI::SetTextureProvider( Noesis::MakePtr<NoesisApp::LocalTextureProvider>( contentPath.c_str() ) );
 	Noesis::GUI::SetFontProvider( Noesis::MakePtr<NoesisApp::LocalFontProvider>( contentPath.c_str() ) );
@@ -673,8 +803,14 @@ void MainWindow::registerComponents()
 	Noesis::RegisterComponent<IngnomiaGUI::NeighborsModel>();
 	Noesis::RegisterComponent<IngnomiaGUI::MilitaryGui>();
 	Noesis::RegisterComponent<IngnomiaGUI::MilitaryModel>();
+	Noesis::RegisterComponent<IngnomiaGUI::InventoryGui>();
+	Noesis::RegisterComponent<IngnomiaGUI::InventoryModel>();
+	Noesis::RegisterComponent<IngnomiaGUI::SelectionGui>();
+	Noesis::RegisterComponent<IngnomiaGUI::SelectionModel>();
 
 	Noesis::RegisterComponent<Noesis::EnumConverter<IngnomiaGUI::State>>();
+	Noesis::RegisterComponent<IngnomiaGUI::ColorToBrushConverter>();
+	Noesis::RegisterComponent<IngnomiaGUI::ColorToBrushConverterDark>();
 
 	Noesis::RegisterComponent<IngnomiaGUI::GameGui>();
 }

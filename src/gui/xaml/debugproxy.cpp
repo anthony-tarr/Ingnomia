@@ -17,6 +17,7 @@
 */
 #include "debugproxy.h"
 
+#include "../../base/global.h"
 #include "../eventconnector.h"
 
 #include <QDebug>
@@ -24,7 +25,8 @@
 DebugProxy::DebugProxy( QObject* parent ) :
 	QObject( parent )
 {
-	connect( this, &DebugProxy::signalSpawnCreature, EventConnector::getInstance().aggregatorDebug(), &AggregatorDebug::onSpawnCreature, Qt::QueuedConnection );
+	connect( this, &DebugProxy::signalSpawnCreature, Global::eventConnector->aggregatorDebug(), &AggregatorDebug::onSpawnCreature, Qt::QueuedConnection );
+    connect( this, &DebugProxy::signalSetWindowSize, Global::eventConnector->aggregatorDebug(), &AggregatorDebug::onSetWindowSize, Qt::QueuedConnection );
 }
 
 void DebugProxy::setParent( IngnomiaGUI::DebugModel* parent )
@@ -35,4 +37,9 @@ void DebugProxy::setParent( IngnomiaGUI::DebugModel* parent )
 void DebugProxy::spawnCreature( QString type )
 {
 	emit signalSpawnCreature( type );
+}
+
+void DebugProxy::setWindowSize( int width, int height )
+{
+    emit signalSetWindowSize( width, height );
 }

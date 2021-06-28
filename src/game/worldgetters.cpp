@@ -16,6 +16,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "../base/global.h"
+#include "../game/game.h"
 #include "../game/animal.h"
 #include "../game/creaturemanager.h"
 #include "../game/farmingmanager.h"
@@ -32,6 +33,11 @@ Tile& World::getTile( const unsigned short x, const unsigned short y, const unsi
 }
 
 Tile& World::getTile( const Position pos )
+{
+	return m_world[pos.toInt()];
+}
+
+const Tile& World::getTile( const Position pos ) const
 {
 	return m_world[pos.toInt()];
 }
@@ -53,13 +59,11 @@ bool World::hasJob( int x, int y, int z )
 
 bool World::hasJob( unsigned int tileID )
 {
-	QMutexLocker lock( &m_mutex );
 	return m_jobSprites.contains( tileID );
 }
 
 QVariantMap World::jobSprite( Position pos )
 {
-	QMutexLocker lock( &m_mutex );
 	return m_jobSprites.value( pos.toInt() );
 }
 
@@ -70,7 +74,6 @@ QVariantMap World::jobSprite( int x, int y, int z )
 
 QVariantMap World::jobSprite( unsigned int tileID )
 {
-	QMutexLocker lock( &m_mutex );
 	return m_jobSprites.value( tileID );
 }
 
@@ -116,26 +119,24 @@ bool World::creatureAtPos( Position pos )
 
 bool World::creatureAtPos( unsigned int posID )
 {
-	QMutexLocker lock( &m_mutex );
 	bool ret = m_creaturePositions.contains( posID );
 	return ret;
 }
 
 Creature* World::firstCreatureAtPos( unsigned int posID, quint8& rotation )
 {
-	QMutexLocker lock( &m_mutex );
 	if ( m_creaturePositions.contains( posID ) )
 	{
 		unsigned int ID = m_creaturePositions[posID].first();
-		Animal* a       = Global::cm().animal( ID );
+		Animal* a       = g->cm()->animal( ID );
 		if ( a )
 		{
 			return a;
 		}
-		Gnome* g = Global::gm().gnome( ID );
-		if ( g )
+		Gnome* gn = g->gm()->gnome( ID );
+		if ( gn )
 		{
-			return g;
+			return gn;
 		}
 	}
 	return 0;
@@ -169,7 +170,7 @@ bool World::isWalkable( Position pos )
 bool World::isWalkableGnome( Position pos )
 {
 	Tile& tile = getTile( pos );
-	return tile.flags & TileFlag::TF_WALKABLE && !( tile.flags & TileFlag::TF_NOPASS );
+	return tile.flags & TileFlag::TF_WALKABLE && !( tile.flags & TileFlag::TF_NOPASS ) && ( tile.fluidLevel < 4 ) && !( tile.flags & TileFlag::TF_LAVA );
 }
 
 bool World::isRamp( Position pos )
@@ -208,21 +209,12 @@ bool World::noTree( const Position pos, const int xRange, const int yRange )
 					return false;
 				}
 			}
-			if ( m_jobSprites.contains( testPosID ) )
+			if ( auto job = g->jm()->getJobAtPos( Position( x, y, pos.z ) ) )
 			{
-				unsigned int jobID = m_jobSprites[testPosID].value( "Wall" ).toMap().value( "JobID" ).toUInt();
-				if ( jobID )
+				if ( job && job->type() == "PlantTree" )
 				{
-					auto job = Global::jm().getJob( jobID );
-					if ( job && job->type() == "PlantTree" )
-					{
-						return false;
-					}
+					return false;
 				}
-			}
-			if ( Global::fm().hasPlantTreeJob( Position( x, y, pos.z ) ) )
-			{
-				return false;
 			}
 		}
 	}
@@ -414,6 +406,43 @@ QString World::getDebugWallConstruction( Position pos )
 	return "no construction";
 }
 
+unsigned int World::getFurnitureOnTile( Position pos )
+{
+	if ( m_wallConstructions.contains( pos.toInt() ) )
+	{
+		auto wc = m_wallConstructions.value( pos.toInt() );
+		if( wc.value( "Type").toString() == "Furniture" )
+		{
+			return wc.value( "Item" ).toUInt();
+		}
+	}
+	return 0;
+}
+
+bool World::isLineOfSight( Position a, Position b ) const
+{
+	return testLine( a, b, [world = this]( const Position &current, const Position& previous ) -> bool {
+		const auto& tile = world->getTile( current );
+		if ( tile.wallType & WallType::WT_VIEWBLOCKING )
+		{
+			return false;
+		}
+		if ( current.z > previous.z && tile.floorType & FloorType::FT_SOLIDFLOOR )
+		{
+			return false;
+		}
+		if (current.z < previous.z)
+		{
+			const auto& tilePrev = world->getTile( current );
+			if ( tilePrev.floorType & FloorType::FT_SOLIDFLOOR )
+			{
+				return false;
+			}
+		}
+		return true;
+	} );
+}
+
 QString World::getDebugFloorConstruction( Position pos )
 {
 	if ( m_floorConstructions.contains( pos.toInt() ) )
@@ -525,7 +554,7 @@ QList<Position> World::connectedNeighbors( Position pos )
 		}
 	}
 
-	Tile& curTile = Global::w().getTile( pos );
+	Tile& curTile = g->w()->getTile( pos );
 
 	if ( (bool)( curTile.wallType & ( WT_STAIR | WT_SCAFFOLD ) ) )
 	{

@@ -19,6 +19,7 @@
 
 #include "../base/counter.h"
 #include "../base/dbhelper.h"
+#include "../base/dbstructs.h"
 #include "../base/position.h"
 
 #include <QList>
@@ -34,7 +35,7 @@ class DB
 {
 public:
 	static void init();
-	static void resetLiveTables();
+	static void initStructs();
 
 	static QVariant execQuery( QString query );
 	static QVariantList execQuery2( QString query );
@@ -48,32 +49,32 @@ public:
 	static QVariantList select2( QString selectCol, QString table, QString whereCol, float whereVal );
 
 	static QVariant select3( QString selectCol, QString table, QString whereCol, QString whereVal, QString whereCol2, QString whereVal2 );
-
+	
 	static QStringList ids( QString table );
 	static QStringList ids( QString table, QString whereCol, QString whereVal );
 	static int numRows( QString table );
 	static int numRows( QString table, QString id );
+	static int numRows2( QString table, QString bsid );
 
 	static QVariantMap selectRow( QString table, QString whereVal );
-	static QVariantMap selectRow( QString table, int whereVal );
 	static QList<QVariantMap> selectRows( QString table, QString whereCol, QString whereVal );
+	static QList<QVariantMap> selectRows( QString table, QString whereCol, QString whereVal, QString whereCol2, QString whereVal2 );
 	static QList<QVariantMap> selectRows( QString table );
 	static QList<QVariantMap> selectRows( QString table, QString id );
-	static QList<QVariantMap> selectRows( QString table, int rowid );
 
 	static int getAccessCounter();
 	static Counter<QString>& getQueryCounter();
 
 	static QStringList tables();
 
-	static bool createItem( const Item& item, QString itemSID, QString materialSID );
-	static bool createItem( const QVariantMap& in );
-	static bool destroyItem( unsigned int itemID );
-
 	static bool updateRow( QString table, QVariantMap values );
 	static bool addRow( QString table, QVariantMap values );
 	static bool removeRows( QString table, QString id );
 	static bool addTranslation( QString id, QString text );
+
+	static QSharedPointer<DBS::Workshop> workshop( QString id );
+	static QSharedPointer<DBS::Job> job( QString id );
+	static QList<QString> jobIds();
 
 private:
 	static QSqlDatabase& getDB();
@@ -84,9 +85,10 @@ private:
 
 	static Counter<QString> m_counter;
 
-	static QSqlQuery m_itemCreateQuery;
-
 	static QMap<Qt::HANDLE, QSqlDatabase> m_connections;
+
+	static QHash<QString, QSharedPointer<DBS::Workshop>> m_workshops;
+	static QHash<QString, QSharedPointer<DBS::Job>> m_jobs;
 
 	DB()  = delete;
 	~DB() = delete;

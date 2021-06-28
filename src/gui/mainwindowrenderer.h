@@ -44,17 +44,20 @@ public:
 	MainWindowRenderer( MainWindow* parent = Q_NULLPTR );
 	~MainWindowRenderer();
 
-	Position calcCursor( int mouseX, int mouseY, bool useViewLevel ) const;
+	int rotation() { return m_rotation; }
+	float scale() { return m_scale; }
+	int moveX() { return m_moveX; }
+	int moveY() { return m_moveY; }
 
 protected:
 	QOpenGLVertexArrayObject m_vao;
-	QOpenGLShaderProgram* m_worldShader         = nullptr;
-	QOpenGLShaderProgram* m_worldUpdateShader   = nullptr;
-	QOpenGLShaderProgram* m_thoughtBubbleShader = nullptr;
-	QOpenGLShaderProgram* m_selectionShader     = nullptr;
-	QOpenGLShaderProgram* m_axleShader          = nullptr;
+	QScopedPointer<QOpenGLShaderProgram> m_worldShader;
+	QScopedPointer<QOpenGLShaderProgram> m_worldUpdateShader;
+	QScopedPointer<QOpenGLShaderProgram> m_thoughtBubbleShader;
+	QScopedPointer<QOpenGLShaderProgram> m_selectionShader;
+	QScopedPointer<QOpenGLShaderProgram> m_axleShader;
 
-	GLuint m_textures[32];
+	GLuint m_textures[32] = { 0 };
 	GLuint m_tileBo       = 0;
 	GLuint m_tileUpdateBo = 0;
 	GLuint m_vbo          = 0;
@@ -83,9 +86,10 @@ private:
 	void updateTextures();
 	void updateRenderParams();
 
-	void updateSelection();
+	void updatePositionAfterCWRotation( float& x, float& y );
 
-	void createArrayTexture( int unit, int depth, const QVector<uint8_t>& data );
+	void createArrayTexture( int unit, int depth );
+	void uploadArrayTexture( int unit, int depth, const uint8_t* data );
 	int m_texesUsed         = 0;
 	bool m_texesInitialized = false;
 
@@ -106,10 +110,7 @@ private:
 	int m_renderSize    = 100;
 	int m_viewLevel     = 100;
 	int m_renderDepth   = 10;
-	bool m_overlay      = true;
 	bool m_debug        = false;
-	bool m_debugOverlay = false;
-	int m_waterQuality  = 0;
 
 	struct RenderVolume
 	{
@@ -127,8 +128,6 @@ private:
 
 	float m_daylight = 1.0;
 
-	int m_worldSize = 0;
-
 	int m_countRenders = 0;
 
 	bool m_pause     = false;
@@ -137,19 +136,20 @@ private:
 	bool m_reloadShaders = false;
 
 	QMap<unsigned int, SelectionData> m_selectionData;
+	bool m_selectionNoDepthTest = false;
+
 	ThoughtBubbleInfo m_thoughBubbles;
 	AxleDataInfo m_axleData;
 	QVector<QVector<TileDataUpdate>> m_pendingUpdates;
-
-	bool m_renderDown = false;
 
 public slots:
 	void initializeGL();
 	void reloadShaders();
 	void resize( int w, int h );
 	void rotate( int direction );
-	void move( int x, int y );
+	void move( float x, float y );
 	void scale( float factor );
+	void setScale( float scale );
 	void setViewLevel( int level );
 	void cleanup();
 	void cleanupWorld();
@@ -161,7 +161,12 @@ public slots:
 	void paintWorld();
 	void onRenderParamsChanged();
 
+	void onSetInMenu( bool value );
+
+	void onUpdateSelection( const QMap<unsigned int, SelectionData>& data, bool noDepthTest );
+
 signals:
 	void redrawRequired();
 	void fullDataRequired();
+	void signalCameraPosition(float x, float y, float z, int r, float scale );
 };

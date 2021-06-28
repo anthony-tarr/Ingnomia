@@ -16,14 +16,10 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "ViewModel.h"
+#include "ProxyMainView.h"
 
-#include "../../base/config.h"
-#include "../../base/db.h"
-#include "../../game/gamemanager.h"
-#include "../../game/newgamesettings.h"
 #include "../eventconnector.h"
 #include "../strings.h"
-#include "ProxyMainView.h"
 
 #include <NsApp/Application.h>
 #include <NsCore/Log.h>
@@ -58,26 +54,35 @@ ViewModel::ViewModel()
 	_backToMain.SetExecuteFunc( MakeDelegate( this, &ViewModel::OnBackToMain ) );
 	_resume.SetExecuteFunc( MakeDelegate( this, &ViewModel::OnResume ) );
 	_fadeInCompleted.SetExecuteFunc( MakeDelegate( this, &ViewModel::OnFadeInCompleted ) );
-	_pause.SetExecuteFunc( MakeDelegate( this, &ViewModel::OnPause ) );
-	_guiZoom.SetExecuteFunc( MakeDelegate( this, &ViewModel::OnGuiZoom ) );
 
 	_state        = State::Main;
 	_showMainMenu = true;
 	_showGameGUI  = false;
 	_ingame       = false;
-	setWindowSize( 1920, 1080 );
+	m_scale       = 1.0f; 
+
+	m_version = "0.0.0.0";
+
+	m_proxy->requestUIScale();
+	m_proxy->requestVersion();
 }
 
 void ViewModel::setWindowSize( int w, int h )
 {
 	_realWidth          = w;
 	_realHeight         = h;
-	_windowWidth        = _realWidth / Config::getInstance().get( "GUIScale" ).toFloat();
-	_windowHeight       = _realHeight / Config::getInstance().get( "GUIScale" ).toFloat();
+	_windowWidth        = _realWidth / m_scale;
+	_windowHeight       = _realHeight / m_scale;
 	_windowWidthString  = QString::number( _windowWidth ).toStdString().c_str();
 	_windowHeightString = QString::number( _windowHeight ).toStdString().c_str();
 	OnPropertyChanged( "WindowWidth" );
 	OnPropertyChanged( "WindowHeight" );
+}
+
+void ViewModel::updateVersion( QString version )
+{
+	m_version = version.toStdString().c_str();	
+	OnPropertyChanged( "Version" );
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -207,7 +212,6 @@ void ViewModel::OnStart( BaseComponent* )
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void ViewModel::OnSettings( BaseComponent* )
 {
-	qDebug() << "ViewModel OnSettings";
 	NS_LOG_INFO( "ViewModel OnSettings" );
 	SetState( State::Settings );
 }
@@ -215,21 +219,9 @@ void ViewModel::OnSettings( BaseComponent* )
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void ViewModel::OnNewGame( BaseComponent* )
 {
-	qDebug() << "ViewModel OnNewGame";
 	NS_LOG_INFO( "ViewModel OnNewGame" );
 	SetState( State::Wait );
-	GameManager::getInstance().startNewGame( std::bind( &ViewModel::OnNewGameFinished, this ) );
-}
-
-void ViewModel::OnNewGameFinished()
-{
-	qDebug() << "new game setup finished";
-	SetState( State::GameRunning );
-	_ingame       = true;
-	_showMainMenu = false;
-	OnPropertyChanged( "ShowMainMenu" );
-	_showGameGUI = true;
-	OnPropertyChanged( "ShowGameGui" );
+	m_proxy->startNewGame();
 }
 
 void ViewModel::OnContinueGame( BaseComponent* param )
@@ -238,32 +230,24 @@ void ViewModel::OnContinueGame( BaseComponent* param )
 
 	if ( !param )
 	{
-		qDebug() << "ViewModel OnContinueGame last game";
 		SetState( State::Wait );
-		GameManager::getInstance().continueLastGame( std::bind( &ViewModel::OnContinueGameFinished, this, _1 ) );
+		m_proxy->continueLastGame();
 	}
 	else
 	{
-		qDebug() << "ViewModel OnContinueGame" << param->ToString().Str();
 		SetState( State::Wait );
-		GameManager::getInstance().loadGame( param->ToString().Str(), std::bind( &ViewModel::OnContinueGameFinished, this, _1 ) );
+		m_proxy->loadGame( param->ToString().Str() );
 	}
 	NS_LOG_INFO( "ViewModel OnContinueGame" );
 	//SetState( State::Wait );
-	//GameManager::getInstance().startNewGame( std::bind( &ViewModel::OnContinueGameFinished, this ) );
+	//Global::gameManager->startNewGame( std::bind( &ViewModel::OnContinueGameFinished, this ) );
 }
 
 void ViewModel::OnContinueGameFinished( bool gameLoaded )
 {
 	if ( gameLoaded )
 	{
-		qDebug() << "load game finished";
-		SetState( State::GameRunning );
-		_showMainMenu = false;
-		_ingame       = true;
-		OnPropertyChanged( "ShowMainMenu" );
-		_showGameGUI = true;
-		OnPropertyChanged( "ShowGameGui" );
+		OnResume( nullptr );
 	}
 	else
 	{
@@ -274,7 +258,6 @@ void ViewModel::OnContinueGameFinished( bool gameLoaded )
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void ViewModel::OnSetupGame( BaseComponent* )
 {
-	qDebug() << "ViewModel OnSetupGame";
 	NS_LOG_INFO( "ViewModel OnNewGame" );
 	SetState( State::NewGame );
 }
@@ -282,35 +265,25 @@ void ViewModel::OnSetupGame( BaseComponent* )
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void ViewModel::OnLoadGame( BaseComponent* )
 {
-	qDebug() << "ViewModel OnLoadGame";
 	NS_LOG_INFO( "ViewModel OnLoadGame" );
+	m_proxy->requestLoadScreenUpdate();
 	SetState( State::LoadGame );
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void ViewModel::OnSaveGame( BaseComponent* )
 {
-	qDebug() << "ViewModel OnSaveGame";
 	NS_LOG_INFO( "ViewModel OnSaveGame" );
 
-	GameManager::getInstance().saveGame();
-
-	SetState( State::GameRunning );
-	_showMainMenu = false;
-	_ingame       = true;
-	OnPropertyChanged( "ShowMainMenu" );
-	_showGameGUI = true;
-	OnPropertyChanged( "ShowGameGui" );
-	GameManager::getInstance().setShowMainMenu( false );
+	m_proxy->saveGame();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void ViewModel::OnExit( BaseComponent* )
 {
-	qDebug() << "ViewModel OnExit";
 	NS_LOG_INFO( "Exiting game" );
 	//NoesisApp::Application::Current()->Shutdown();
-	EventConnector::getInstance().onExit();
+	Global::eventConnector->onExit();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -321,25 +294,24 @@ void ViewModel::OnBackToMain( BaseComponent* )
 	OnPropertyChanged( "ShowMainMenu" );
 	_showGameGUI = false;
 	OnPropertyChanged( "ShowGameGui" );
-	GameManager::getInstance().setShowMainMenu( true );
+	m_proxy->setShowMainMenu( true );
+	m_proxy->endGame();
 	SetState( State::Main );
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void ViewModel::OnBack( BaseComponent* )
 {
-	qDebug() << "ViewModel OnBack";
 	switch ( _state )
 	{
 		case State::Main:
 			break;
 		case State::GameRunning:
 			_showMainMenu = true;
-			OnPropertyChanged( "ShowMainMenu" );
 			_showGameGUI = false;
-			OnPropertyChanged( "ShowGameGui" );
+			_ingame = true;
 			SetState( State::Ingame );
-			GameManager::getInstance().setShowMainMenu( true );
+			m_proxy->setShowMainMenu( true );
 			break;
 		case State::Settings:
 		case State::LoadGame:
@@ -353,20 +325,16 @@ void ViewModel::OnBack( BaseComponent* )
 				SetState( State::Main );
 			}
 			_showMainMenu = true;
-			_showGameGUI = false;
-			OnPropertyChanged( "ShowMainMenu" );
-			OnPropertyChanged( "ShowGameGui" );
-			GameManager::getInstance().setShowMainMenu( true );
+			_showGameGUI  = false;
+			m_proxy->setShowMainMenu( true );
 			break;
 		case State::Start:
 		case State::Ingame:
 		{
 			_showMainMenu = false;
 			_ingame       = false;
-			OnPropertyChanged( "ShowMainMenu" );
 			_showGameGUI = true;
-			OnPropertyChanged( "ShowGameGui" );
-			GameManager::getInstance().setShowMainMenu( false );
+			m_proxy->setShowMainMenu( false );
 			SetState( State::GameRunning );
 			break;
 		}
@@ -374,6 +342,8 @@ void ViewModel::OnBack( BaseComponent* )
 		default:
 			break;
 	}
+	OnPropertyChanged( "ShowMainMenu" );
+	OnPropertyChanged( "ShowGameGui" );
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -381,9 +351,10 @@ void ViewModel::OnResume( BaseComponent* )
 {
 	SetState( State::GameRunning );
 	_showMainMenu = false;
-	_showGameGUI = true;
+	_showGameGUI  = true;
+	OnPropertyChanged( "ShowMainMenu" );
 	OnPropertyChanged( "ShowGameGui" );
-	GameManager::getInstance().setShowMainMenu( false );
+	m_proxy->setShowMainMenu( false );
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -409,41 +380,16 @@ void ViewModel::SetState( State value )
 	}
 }
 
-void ViewModel::OnPause( BaseComponent* params )
+void ViewModel::setUIScale( float value )
 {
-	qDebug() << "viewmodel on pause";
-	GameManager::getInstance().setPaused( !GameManager::getInstance().paused() );
-}
-
-const NoesisApp::DelegateCommand* ViewModel::GetPause() const
-{
-	return &_pause;
-}
-
-void ViewModel::OnGuiZoom( BaseComponent* params )
-{
-
-	QString param( params->ToString().Str() );
-	float scale = Config::getInstance().get( "GUIScale" ).toFloat();
-	if ( param == "In" )
-	{
-		scale += 0.1f;
-		scale = qMin( 3.f, scale );
-	}
-	else
-	{
-		scale -= 0.1f;
-		scale = qMax( 0.5f, scale );
-	}
-	Config::getInstance().set( "GUIScale", scale );
-
+	m_scale = value;
 	// Trigger layout update
 	setWindowSize( _realWidth, _realHeight );
 }
 
-const NoesisApp::DelegateCommand* ViewModel::GetGuiZoom() const
+const char* ViewModel::GetVersion() const
 {
-	return &_guiZoom;
+	return m_version.Str();;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -462,7 +408,6 @@ NS_IMPLEMENT_REFLECTION( IngnomiaGUI::ViewModel, "IngnomiaGUI.ViewModel" )
 	NsProp( "Exit", &ViewModel::GetExit );
 	NsProp( "Back", &ViewModel::GetBack );
 	NsProp( "BackToMain", &ViewModel::GetBackToMain );
-	NsProp( "CmdPause", &ViewModel::GetPause );
 	NsProp( "Resume", &ViewModel::GetResume );
 	NsProp( "FadeInCompleted", &ViewModel::GetFadeInCompleted );
 	NsProp( "State", &ViewModel::GetState, &ViewModel::SetState );
@@ -471,7 +416,7 @@ NS_IMPLEMENT_REFLECTION( IngnomiaGUI::ViewModel, "IngnomiaGUI.ViewModel" )
 	NsProp( "ShowGameGUI", &ViewModel::GetShowGameGUI );
 	NsProp( "WindowWidth", &ViewModel::GetWindowWidth );
 	NsProp( "WindowHeight", &ViewModel::GetWindowHeight );
-	NsProp( "CmdGuiZoom", &ViewModel::GetGuiZoom );
+	NsProp( "Version", &ViewModel::GetVersion );
 
 	NsProp( "NewGameModel", &ViewModel::getNewGameModel );
 

@@ -48,24 +48,9 @@ class NewGameSettings : public QObject
 {
 	Q_OBJECT
 
-private:
-	// Private Constructor
-	NewGameSettings( QObject* parent = 0 );
-	// Stop the compiler generating methods of copy the object
-	NewGameSettings( NewGameSettings const& copy );            // Not Implemented
-	NewGameSettings& operator=( NewGameSettings const& copy ); // Not Implemented
-
 public:
+	NewGameSettings( QObject* parent = 0 );
 	~NewGameSettings();
-
-	static NewGameSettings& getInstance()
-	{
-		// The only instance
-		// Guaranteed to be lazy initialized
-		// Guaranteed that it will be destroyed correctly
-		static NewGameSettings instance;
-		return instance;
-	}
 
 	void save();
 
@@ -84,63 +69,63 @@ public:
 		return m_seed;
 	}
 
-	const int worldSize()
+	int worldSize()
 	{
 		return m_worldSize;
 	}
-	const int zLevels()
+	int zLevels()
 	{
 		return m_zLevels;
 	}
-	const int ground()
+	int ground()
 	{
 		return m_ground;
 	}
-	const int flatness()
+	int flatness()
 	{
 		return m_flatness;
 	}
-	const int oceanSize()
+	int oceanSize()
 	{
 		return m_oceanSize;
 	}
-	const int rivers()
+	int rivers()
 	{
 		return m_rivers;
 	}
-	const int riverSize()
+	int riverSize()
 	{
 		return m_riverSize;
 	}
-	const int numGnomes()
+	 int numGnomes()
 	{
 		return m_numGnomes;
 	}
-	const int startZone()
+	int startZone()
 	{
 		return m_startZone;
 	}
-	const int treeDensity()
+	int treeDensity()
 	{
 		return m_treeDensity;
 	}
-	const int plantDensity()
+	int plantDensity()
 	{
 		return m_plantDensity;
 	}
-	const bool isPeaceful()
+	bool isPeaceful()
 	{
 		return m_isPeaceful;
 	}
-	const int globalMaxPerType()
+	int globalMaxPerType()
 	{
 		return m_maxPerType;
 	}
-	const int numWildAnimals()
+	int numWildAnimals()
 	{
 		return m_numWildAnimals;
 	}
-	const int maxAnimalsPerType( QString type );
+	int maxAnimalsPerType( QString type );
 	
 
 	bool setWorldSize( int value );
@@ -182,6 +167,8 @@ public:
 	QStringList presetNames();
 	QString addPreset();
 	bool removePreset( QString name );
+	bool savePreset( QVariantList items );
+	bool onSavePreset();
 
 	bool isChecked( QString sid );
 	void setChecked( QString sid, bool value );
@@ -194,6 +181,8 @@ private:
 	void saveUserPresets();
 
 	void setStartingItems( QVariantList sil );
+	void collectStartItems( QVariantList& sil );
+
 
 	QString m_kingdomName;
 	QString m_seed;
@@ -220,7 +209,7 @@ private:
 	QStringList materials( QString itemSID );
 
 	QVariantList m_standardPresets;
-	QVariantList m_userPresets;
+	QList<QVariantMap> m_userPresets;
 
 	QString m_selectedPreset;
 

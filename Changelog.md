@@ -1,7 +1,232 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## [0.8.8]
+
+### Fixed
+- remove job when deleting farm tile
+- fix deconstructing scaffold
+- fix beehive job
+- suspending workshops
+- XpMod can be read from config file (#173)
+- SeedTrader to trade potato & onion seeds.
+- Addded missing material name for Panda, Spider, Woodlouse
+
+### Added
+- support for sound
+- add num plots to grove info, 
+
+### Changed
+- update Noesis to 3.0.12
+- allow designating grove over existing plants
+- improve auto craft behavior
+- some rebalance of trade values for metal coin, bar and ores. (#171)
+
+## [0.8.7]
+
+### Fixed
+- grape seed on start up
+- game pausing when in mainmenu
+- remove dead gnomes from squads
+- show number of trees in grove window
+- missing textures when loading the game
+- floating items when mining the ramp under a working gnome
+- amount buttons in trader UI
+- partial write back while updating workshop settings
+
+### Added
+- attack on sight combat behavior
+- defend (hold position) combat behavior
+
+### Changed
+- allow corpses outside stockpiles to be butchered
+- can designate groves over existing trees
+- allow jobs in mid-air to be selected
+- reduce number of item categories
+
+### Removed
+
+
+## [0.8.6]
+
+### Fixed
+- crash with missions
+- remove plants on the tile above when digging stairs up
+- gnomes forgetting their rooms on load
+- swapped items getting stuck as constructed when looking for a tool
+- seeds for leaf plants like tea, tobacco, woad and dyers weed
+
+### Added
+- burn recipe for bones in the waste disposal
+- stairs made from stone blocks
+- fisher gui
+- controls for mechanisms
+- controls for automatons
+- full DPI scaling support
+- some statistics
+
+### Changed
+- restructured the tile info window
+- moved all job handling other than hauling jobs to central job manager instance
+- trees can no longer overlapp with each other
+- trees can no longer replace existing tiles
+- onions and potatos produces seeds again and use seeds to plant
+
+### Removed
+
+
+## [0.8.5]
+
+### Fixed
+- moved cursor calculation to game thread
+- cursor detached from selection when using WASD
+- going back to resume screen when selecting settings out of a running game
+- container capacity on stockpiles after load
+- crash because of incorrect data in save folders
+- buildable carry containers
+- crash because of incorrect bitmaps in gnome detail window
+- user presets saving on embark
+- translation string for willow tree
+- willow trees are now plantable
+- fish shouldn't drown anymore
+
+### Added
+- capacity info for stockpile tiles on tile info
+- watched item list
+- 24 new food items with recipes and kitchen integration
+- button to save user presets
+- glass bottle and jar
+- show version on main menu screen
+
+### Changed
+- furniture can now be constructed anywhere and won't get deconstructed when a room designation underneath is removed
+- redesigned inventory overview
+- removed direct mapping of certain ids to databse rows, that should prevent save games breaking in the future when stuff is removed or inserted at the wrong place
+- grain plants produce seeds again and need seeds for planting
+
+### Removed
+
+
+## [0.8.4]
+
+### Fixed
+- large refactor of code base to fix some crashes and memory leaks
+- behavior tree instantiation 
+
+### Added
+- Willow trees
+- Info display for selected command and selection size
+
+### Changed
+- Rivers now have sand floor, preventing grass and plants spawning there
+- speed up light updates
+- speed up animal ai  for grazing
+
+### Removed
+
+## [0.8.3]
+
+### Fixed
+- crash in tile info panel due to wrong thread
+- random crash due to use of GPU in wrong context
+- crash with auto craft in waste disposal
+
+### Added
+
+### Changed
+- sped up auto-craft job generation
+- include log file in crash dumps
+
+### Removed
+
+
+## [0.8.2]
+
+### Fixed
+- suboptimal paths due to wrong heuristic in pathfinding
+- gnomes trying to work in deep water
+- missing floor texture for undiscovered areas
+- find new path if target has moved
+- crash with selected dig stairs tool at layer 0
+- build scaffolds on top of each other
+- added check for corrupted config file and load standard config if needed
+- deconstruct workshops sets tile flags correctly, allowing to build on that tile again
+- prevent creatures from walking into deep water
+- constrain camera to actual game area
+- reasonable speed range for WASD
+- load game screen updates without restarting now
+
+### Added
+- ui elements to show state of and toggle certain render options
+- toggle for job sprites
+- added bugsplat crash reporting to windows builds
+
+### Changed
+- improved cursor for building floor on walls
+- optimized pathfinding if multiple gnomes have same goal
+- reduced water pressure on the faucet
+- mining job sprite, first poc for job sprites giving more visual feedback about the job
+
+### Removed
+- old networking code
+
+## [0.8.1]
+
+### Fixed
+- message window not disappearing after clicking an answer button if game is unpaused, 
+  game not possible to unpause now when message window is open
+- GUI quickly changing size and back after resizing the window
+- key space for pause
+- text clipping in some menu panels
+- dig stairs and ramps cursor
+- rotating the world keeps view on current location
+- set view to correct position after load
+- added bounds to world movement so it can't be moved out of view accidentally
+- fix keyboard movement for fast speed
+- felling trees in groves requires a felling axe
+- jobs created with no required tool
+- groves not keeping suspend flag
+- killed animals leave corpses again
+- butchering animal corpses
+- explorative mining speed now the same as mining
+- jobs with missing materials not returned to job queue correctly
+- visual corruptions on AMD GPUs
+- some alpha blending issues
+- uiscale reverting to 100%
+- crash when adding or deleting a custom profession
+- building scaffolds
+- dead gnomes give up workshop assignments
+- dead creatures drop their inventory
+- fix crash on startup on some systems
+
+### Added
+- moved text in xamls to resource files as preparation for translations PR#90 Daynvheur
+- added french translation PR#90 Daynvheur
+- settings dialog
+- WASD movement
+- item summary
+- setting for minimum ambient light level
+- colors for skill buttons in population overview
+- colors for population schedule buttons
+- blacksmith recipe for metal needle
+- honey wine
+- fill hole command
+
+### Changed
+- more info for jobs  PR #91 by rivenwyrm
+- updated to Noesis 3.0.6
+- removed key triggers from xamls
+- use only one save game for auto save
+- improved auto craft behavior
+- honey can be stored in barrels
+- greatly reduced bone drops from butchering
+
+
+### Removed
+
+
+
+## [0.8.0]
 ### Fixed
 - Isolated simulation thread from UI thread, so they don't share data.
   UI components are now split into a UI controller living in t he UI thread and a data aggregation component living in the simulation thread.
@@ -30,7 +255,7 @@ All notable changes to this project will be documented in this file.
 - Replace explicit squad target control by behavior settings for Squad.
 - Move Uniform assignment from squad position to individual gnome.
   Gnomes can now have a uniform without being assigned to a squad, but they still need a squad to control their combat behavior.
-- Allow arbitrarily sized quads, up from only 5 slots.
+- Allow arbitrarily sized squads, up from only 5 slots.
 - Speed up high level pathability tests.
 - Speed up A* pathfinding.
 - Speed up liquid simulation.

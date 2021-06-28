@@ -28,6 +28,8 @@ public:
 
 	static QString spriteID( QString itemID );
 	static bool spriteIsRandom( QString spriteID );
+	static bool spriteHasAnim( QString spriteID );
+	static QString materialColor( QString materialID );
 
 	static int materialToolLevel( QString material );
 
@@ -46,20 +48,25 @@ public:
 
 	static QString itemGroup( QString itemID );
 
+	// itemSID => [ materialType => craftID ]
+	static QMap<QString, QMultiMap<QString, QString>> workshopPossibleCraftResults( QString workshopId );
+
 private:
 	DBHelper()  = delete;
 	~DBHelper() = delete;
 
 	static QMap<QString, QString> m_spriteIDCache;
 	static QMap<QString, bool> m_spriteIsRandomCache;
+	static QMap<QString, bool> m_spriteHasAnimCache;
+	static QMap<QString, QString> m_materialColorCache;
 
-	static QMap<int, QString> m_materialSIDCache;
-	static QMap<int, QString> m_itemSIDCache;
-	static QMap<QString, int> m_materialUIDCache;
 	static QMap<QString, int> m_materialToolLevelCache;
-	static QMap<QString, int> m_itemUIDCache;
 	static QMap<int, bool> m_itemIsContainerCache;
 	static QMap<int, QString> m_qualitySIDCache;
 	static QMap<int, float> m_qualityModCache;
 	static QMap<QString, QString> m_itemGroupCache;
+
+	static QMap<QString, QMap<QString, QMultiMap<QString, QString>>> m_workshopCraftResults;
+
+	static QMutex m_mutex;
 };

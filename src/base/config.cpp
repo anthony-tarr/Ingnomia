@@ -28,14 +28,7 @@
 
 Config::Config()
 {
-}
-
-Config::~Config()
-{
-}
-
-bool Config::init()
-{
+	QMutexLocker lock( &m_mutex );
 	IO::createFolders();
 
 	//check if Ingnomia folder in /Documents/My Games exist
@@ -45,10 +38,19 @@ bool Config::init()
 
 	if ( !IO::loadFile( folder + "settings/config.json", jd ) )
 	{
-		return false;
+		if( !IO::loadOriginalConfig( jd ) )
+		{
+			return;
+		}
+	}
+	
+	m_settings = jd.toVariant().toMap();
+
+	if( m_settings.keys().size() == 0 )
+	{
+		return;
 	}
 
-	m_settings = jd.toVariant().toMap();
 
 	/*
 	if ( !IO::loadFile( folder + "settings/keybindings.json", jd ) )
@@ -60,7 +62,7 @@ bool Config::init()
 	}
 	*/
 	// add values to exisiting confings
-	if ( !m_settings.contains( "XpMod" ) || m_settings.value( "XpMod" ).toInt() != 250 )
+	if ( !m_settings.contains( "XpMod" ) )
 	{
 		m_settings.insert( "XpMod", 250. );
 	}
@@ -74,17 +76,23 @@ bool Config::init()
 	{
 		m_settings.insert( "AutoSaveInterval", 3 );
 	}
-	if ( !m_settings.contains( "GUIScale" ) )
+	if ( !m_settings.contains( "uiscale" ) )
 	{
-		m_settings.insert( "GUIScale", 1.0 );
+		m_settings.insert( "uiscale", 1.0 );
 	}
 	m_settings.insert( "dataPath", QCoreApplication::applicationDirPath() + "/content" );
 
-	return ok;
+	m_valid = true;
+
+}
+
+Config::~Config()
+{
 }
 
 QVariant Config::get( QString key )
 {
+	QMutexLocker lock( &m_mutex );
 	if ( m_settings.contains( key ) )
 	{
 		QVariant out = m_settings[key];
@@ -98,5 +106,13 @@ QVariant Config::get( QString key )
 
 void Config::set( QString key, QVariant value )
 {
-	m_settings[key] = value;
+	QMutexLocker lock( &m_mutex );
+	const auto oldValue = m_settings[key];
+	if (oldValue != value)
+	{
+		m_settings[key] = value;
+		IO::saveConfig();
+
+		qDebug() << "Update config" << key << "=" << value << "(was" << oldValue << ")";
+	}
 }

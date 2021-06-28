@@ -16,6 +16,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "militarymanager.h"
+#include "game.h"
 
 #include "../base/db.h"
 #include "../base/gamestate.h"
@@ -24,7 +25,6 @@
 #include "../base/util.h"
 #include "../game/gnome.h"
 #include "../game/creaturemanager.h"
-#include "../game/gnomemanager.h"
 #include "../game/inventory.h"
 
 #include <QDebug>
@@ -127,7 +127,7 @@ QVariantMap Squad::serialize()
 	QVariantMap out;
 	out.insert( "Name", name );
 	out.insert( "ID", id );
-	out.insert( "Gnomes", Util::uintList2Variant( gnomes ) );
+	out.insert( "Gnomes", Global::util->uintList2Variant( gnomes ) );
 
 	QVariantList vl;
 	for( auto prio : priorities )
@@ -142,11 +142,12 @@ QVariantMap Squad::serialize()
 	return out;
 }
 
-Squad::Squad( const QVariantMap& in )
+Squad::Squad( QList<QString> tps, const QVariantMap& in ) :
+	types( tps )
 {
 	name       = in.value( "Name" ).toString();
 	id         = in.value( "ID" ).toUInt();
-	gnomes     = Util::variantList2UInt( in.value( "Gnomes" ).toList() );
+	gnomes     = Global::util->variantList2UInt( in.value( "Gnomes" ).toList() );
 
 	if( in.contains( "Priorities" ) )
 	{
@@ -160,71 +161,70 @@ Squad::Squad( const QVariantMap& in )
 			TargetPriority tp { type, (MilAttitude)vm.value( "Attitude" ).toInt() };
 			priorities.append( tp );
 		}
-		auto types = Global::cm().types();
 		for( auto type : types )
 		{
 			if( !typeSet.contains( type ) )
 			{
-				TargetPriority tp { type, MilAttitude::_IGNORE };
+				TargetPriority tp { type, MilAttitude::FLEE };
 				priorities.append( tp );
 			}
 		}
 	}
 	else
 	{
-		auto types = Global::cm().types();
 		for( auto type : types )
 		{
-			TargetPriority tp { type, MilAttitude::_IGNORE };
+			TargetPriority tp { type, MilAttitude::FLEE };
 			priorities.append( tp );
 		}
 	}
 }
 
-MilitaryManager::MilitaryManager()
+MilitaryManager::MilitaryManager( Game* parent ) :
+	g( parent ),
+	QObject( parent )
 {
 }
 MilitaryManager::~MilitaryManager()
 {
 }
 
-void MilitaryManager::reset()
-{
-	m_roles.clear();
-	m_squads.clear();
-	m_gnome2Squad.clear();
-}
-
 void MilitaryManager::init()
 {
-	//load from file
-	QJsonDocument jd;
-	IO::loadFile( QStandardPaths::writableLocation( QStandardPaths::DocumentsLocation ) + "/My Games/Ingnomia/settings/military.json", jd );
-
-	QVariantMap vm = jd.toVariant().toMap();
-
-	if ( vm.contains( "Roles" ) )
+	auto mm = GameState::military;
+	QVariantList pl;
+	if ( mm.contains( "Roles" ) )
 	{
-		auto pl = vm.value( "Roles" ).toList();
-		for ( auto entry : pl )
+		pl = mm.value( "Roles" ).toList();
+	}
+	else
+	{
+		//load from file
+		QJsonDocument jd;
+		IO::loadFile( QStandardPaths::writableLocation( QStandardPaths::DocumentsLocation ) + "/My Games/Ingnomia/settings/military.json", jd );
+		QVariantMap vm = jd.toVariant().toMap();
+		if ( vm.contains( "Roles" ) )
 		{
-			MilitaryRole pos( entry.toMap() );
-			m_roles.insert( pos.id, pos );
+			pl = vm.value( "Roles" ).toList();
 		}
+	}
+	for ( auto entry : pl )
+	{
+		MilitaryRole pos( entry.toMap() );
+		m_roles.insert( pos.id, pos );
 	}
 	if ( m_roles.empty() )
 	{
 		addRole();
 	}
 
-	auto mm = GameState::military;
-
+	
 	if ( mm.contains( "Squads" ) )
 	{
 		auto sl = mm.value( "Squads" ).toList();
 		for ( auto entry : sl )
 		{
-			Squad squad( entry.toMap() );
+			Squad squad( g->m_creatureManager->types(), entry.toMap() );
 			m_squads.insert( squad.id, squad );
 
 			for( auto gnome : squad.gnomes )
@@ -378,12 +378,12 @@ Squad* MilitaryManager::squad( unsigned int id )
 
 unsigned int MilitaryManager::addSquad()
 {
-	Squad squad;
+	Squad squad( g->m_creatureManager->types() );
 
-	auto types = Global::cm().types();
+	auto types = g->m_creatureManager->types();
 	for( auto type : types )
 	{
-		TargetPriority tp { type, MilAttitude::_IGNORE };
+		TargetPriority tp { type, MilAttitude::DEFEND };
 		squad.priorities.append( tp );
 	}
 
@@ -410,7 +410,7 @@ void MilitaryManager::moveSquadUp( unsigned int id )
 	{
 		if( m_squads[i].id == id )
 		{
-			m_squads.swapItemsAt( i, i - 1 );
+			m_squads.move( i, i - 1 );
 			return;
 		}
 	}
@@ -422,7 +422,7 @@ void MilitaryManager::moveSquadDown( unsigned int id )
 	{
 		if( m_squads[i].id == id )
 		{
-			m_squads.swapItemsAt( i, i + 1 );
+			m_squads.move( i, i + 1 );
 			return;
 		}
 	}
@@ -630,7 +630,7 @@ bool MilitaryManager::movePrioUp( unsigned int squadID, QString type )
 			{
 				if( squad.priorities[i].type == type )
 				{
-					squad.priorities.swapItemsAt( i - 1, i );
+					squad.priorities.move( i, i - 1 );
 					return true;
 				}
 			}
@@ -649,11 +649,28 @@ bool MilitaryManager::movePrioDown( unsigned int squadID, QString type )
 			{
 				if( squad.priorities[i].type == type )
 				{
-					squad.priorities.swapItemsAt( i, i + 1 );
+					squad.priorities.move( i, i + 1 );
 					return true;
 				}
 			}
 		}
+	}
+	return false;
+}
+
+void MilitaryManager::setRoleCivilian( unsigned int roleID, bool value )
+{
+	if ( m_roles.contains( roleID ) )
+	{
+		m_roles[roleID].isCivilian = value;
+	}
+}
+
+bool MilitaryManager::roleIsCivilian( unsigned int roleID )
+{
+	if ( m_roles.contains( roleID ) )
+	{
+		return m_roles[roleID].isCivilian;
 	}
 	return false;
 }

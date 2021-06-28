@@ -17,13 +17,15 @@
 */
 #pragma once
 
+
 #include "../base/gamestate.h"
 
-#include <QMutex>
 #include <QObject>
 #include <QRandomGenerator>
 #include <QSet>
 #include <QVariantMap>
+
+class Game;
 
 enum class UniformItemQuality : unsigned char
 {
@@ -76,8 +78,8 @@ struct MilitaryRole
 };
 
 enum class MilAttitude {
-	_IGNORE,
-	AVOID,
+	FLEE,
+	DEFEND,
 	ATTACK,
 	HUNT
 };
@@ -92,14 +94,16 @@ struct Squad
 {
 	QString name = "new squad";
 	quint32 id   = GameState::createID();
+	QList<QString> types;
 
 	QList<unsigned int> gnomes;
 
 	QVariantMap serialize();
-	Squad( const QVariantMap& in );
+	Squad( QList<QString> tps, const QVariantMap& in );
 
 	QList<TargetPriority> priorities;
 
+	Squad( QList<QString> tps ) : types( tps ) {};
 	Squad() {};
 };
 Q_DECLARE_METATYPE( Squad )
@@ -113,12 +117,12 @@ Q_DECLARE_METATYPE( Squad )
 class MilitaryManager : public QObject
 {
 	Q_OBJECT
-
+	Q_DISABLE_COPY_MOVE( MilitaryManager )
 public:
-	MilitaryManager();
+	MilitaryManager() = delete;
+	MilitaryManager( Game* parent );
 	~MilitaryManager();
 
-	void reset();
 	void init();
 
 	void onTick( quint64 tickNumber, bool seasonChanged, bool dayChanged, bool hourChanged, bool minuteChanged );
@@ -151,8 +155,10 @@ public:
 
 	void save();
 
+	bool roleIsCivilian( unsigned int roleID );
+
 private:
-	QMutex m_mutex;
+	QPointer<Game> g;
 
 	int m_startIndex = 0;
 
@@ -196,4 +202,6 @@ public slots:
 
 	bool movePrioUp( unsigned int squadID, QString type );
 	bool movePrioDown( unsigned int squadID, QString type );
+
+	void setRoleCivilian( unsigned int roleID, bool value );
 };

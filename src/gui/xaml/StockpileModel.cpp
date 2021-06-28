@@ -388,7 +388,7 @@ StockpileModel::StockpileModel()
 	{
 		m_prios->Add( MakePtr<SpPriority>( ( QString( "Priority " ) + QString::number( i + 1 ) ).toStdString().c_str() ) );
 	}
-	SetSelectedPriority( m_prios->Get( 0 ) );
+	m_selectedPrio = m_prios->Get( 0 );
 
 	m_categories = *new ObservableCollection<CategoryItem>();
 
@@ -399,6 +399,8 @@ StockpileModel::StockpileModel()
 
 void StockpileModel::onUpdateInfo( const GuiStockpileInfo& info )
 {
+	m_blockSignals = true;
+
 	bool isSameStockpile = ( m_stockpileID == info.stockpileID );
 	m_stockpileID        = info.stockpileID;
 	m_name               = info.name.toStdString().c_str();
@@ -411,7 +413,7 @@ void StockpileModel::onUpdateInfo( const GuiStockpileInfo& info )
 	{
 		m_prios->Add( MakePtr<SpPriority>( ( QString( "Priority " ) + QString::number( i + 1 ) ).toStdString().c_str() ) );
 	}
-	SetSelectedPriority( m_prios->Get( qMin( qMax( 0, info.priority ), m_prios->Count() ) ) );
+	m_selectedPrio = m_prios->Get( qMin( qMax( 0, info.priority ), m_prios->Count() ) );
 
 	//auto cats = info.filter.categories();
 	auto filter = info.filter;
@@ -452,6 +454,16 @@ void StockpileModel::onUpdateInfo( const GuiStockpileInfo& info )
 
 	OnPropertyChanged( "Summary" );
 	OnPropertyChanged( "Limits" );
+
+	m_blockSignals = false;
+}
+
+void StockpileModel::setBasicOptions()
+{
+	if( !m_blockSignals )
+	{
+		m_proxy->setBasicOptions( m_stockpileID, m_name.Str(), m_prios->IndexOf( m_selectedPrio ), m_suspended, m_pullOthers, m_pullFrom );
+	}
 }
 
 void StockpileModel::onUpdateContent( const GuiStockpileInfo& info )
@@ -480,8 +492,7 @@ const char* StockpileModel::GetName() const
 void StockpileModel::SetName( const char* value )
 {
 	m_name = value;
-
-	m_proxy->setBasicOptions( m_stockpileID, m_name.Str(), m_prios->IndexOf( m_selectedPrio ), m_suspended, m_pullOthers, m_pullFrom );
+	setBasicOptions();
 	OnPropertyChanged( "Name" );
 }
 
@@ -493,7 +504,7 @@ bool StockpileModel::GetSuspended() const
 void StockpileModel::SetSuspended( bool value )
 {
 	m_suspended = value;
-	m_proxy->setBasicOptions( m_stockpileID, m_name.Str(), m_prios->IndexOf( m_selectedPrio ), m_suspended, m_pullOthers, m_pullFrom );
+	setBasicOptions();
 	OnPropertyChanged( "Suspended" );
 }
 
@@ -505,7 +516,7 @@ bool StockpileModel::GetPullFrom() const
 void StockpileModel::SetPullFrom( bool value )
 {
 	m_pullFrom = value;
-	m_proxy->setBasicOptions( m_stockpileID, m_name.Str(), m_prios->IndexOf( m_selectedPrio ), m_suspended, m_pullOthers, m_pullFrom );
+	setBasicOptions();
 	OnPropertyChanged( "PullFromHere" );
 }
 
@@ -517,7 +528,7 @@ bool StockpileModel::GetPullOthers() const
 void StockpileModel::SetPullOthers( bool value )
 {
 	m_pullOthers = value;
-	m_proxy->setBasicOptions( m_stockpileID, m_name.Str(), m_prios->IndexOf( m_selectedPrio ), m_suspended, m_pullOthers, m_pullFrom );
+	setBasicOptions();
 	OnPropertyChanged( "PullFromOther" );
 }
 
@@ -541,7 +552,7 @@ void StockpileModel::SetSelectedPriority( SpPriority* prio )
 	if ( m_selectedPrio != prio )
 	{
 		m_selectedPrio = prio;
-		m_proxy->setBasicOptions( m_stockpileID, m_name.Str(), m_prios->IndexOf( m_selectedPrio ), m_suspended, m_pullOthers, m_pullFrom );
+		setBasicOptions();
 		OnPropertyChanged( "SelectedPrio" );
 	}
 }

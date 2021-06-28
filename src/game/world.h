@@ -34,6 +34,7 @@
 class Plant;
 class Animal;
 class Creature;
+class Game;
 
 struct Position;
 class Sprite;
@@ -49,7 +50,6 @@ enum CONSTRUCTION_ID
 	CID_STAIRS,
 	CID_RAMP,
 	CID_RAMPCORNER,
-	CID_SCAFFOLD,
 	CID_ITEM,
 	CID_WORKSHOP
 };
@@ -70,11 +70,13 @@ enum CONSTR_ITEM_ID
 
 class World
 {
+	Q_DISABLE_COPY_MOVE( World )
 private:
+	QPointer<Game> g;
+
 	LightMap m_lightMap;
 	RegionMap m_regionMap;
 
-	QMutex m_mutex;
 	QMutex m_updateMutex;
 
 	int m_dimX = 1;
@@ -108,19 +110,17 @@ private:
 	bool constructStairs( QVariantMap& con, Position pos, int rotation, QVariantList itemUIDs, QVariantList materialUIDs, QStringList materialSIDs, Position extractTo );
 	bool constructRamp( QVariantMap& con, Position pos, int rotation, QVariantList itemUIDs, QVariantList materialUIDs, QStringList materialSIDs, Position extractTo );
 	bool constructRampCorner( QVariantMap& con, Position pos, int rotation, QVariantList itemUIDs, QVariantList materialUIDs, QStringList materialSIDs, Position extractTo );
-	bool constructScaffold( QVariantMap& con, Position pos, int rotation, QVariantList itemUIDs, QVariantList materialUIDs, QStringList materialSIDs, Position extractTo );
-	bool constructWorkshop( QVariantMap& con, Position pos, int rotation, QVariantList items, Position extractTo );
 	bool constructPipe( QString type, Position pos, unsigned int itemUID );
 	bool deconstructPipe( QVariantMap constr, Position pos, Position workPos );
 
+	
+
 public:
-	World();
+	World( int dimX, int dimY, int dimZ, Game* game );
 	~World();
 
 	void init();
-	void initLite();
 	void initWater();
-	void reset();
 	void afterLoad();
 
 	void processGrass();
@@ -205,8 +205,8 @@ public:
 
 	// returns true when construction succeeded, false otherwise
 	bool construct( QString constructionSID, Position pos, int rotation, QList<unsigned int> itemUIDs, Position extractTo );
-	bool constructWorkshop( QString constructionSID, Position pos, int rotation, QList<unsigned int> itemUIDs, Position extractTo );
 	bool constructItem( QString itemSID, Position pos, int rotation, QList<unsigned int> itemUIDs, Position extractTo );
+	bool constructWorkshop( QString constructionSID, Position pos, int rotation, QList<unsigned int> itemUIDs, Position extractTo );
 	// returns true when deconstruction succeeded, false otherwise
 	bool deconstruct( Position pos, Position workPos, bool ignoreGravity );
 	bool deconstruct2( QVariantMap constr, Position decPos, bool isFloor, Position workPos, bool ignoreGravity );
@@ -283,9 +283,8 @@ public:
 	Tile& getTile( const unsigned short x, const unsigned short y, const unsigned short z );
 	//Tile& getTile( Position pos );
 	Tile& getTile( const Position pos );
+	const Tile& getTile( const Position pos ) const;
 	Tile& getTile( const unsigned int id );
-
-	bool setNetworkMove( unsigned int id, Position newPos, int facing );
 
 	bool noTree( const Position pos, const int xRange, const int yRange );
 	bool noShroom( const Position pos, const int xRange, const int yRange );
@@ -324,6 +323,10 @@ public:
 
 	QString getDebugWallConstruction( Position pos );
 	QString getDebugFloorConstruction( Position pos );
+
+	unsigned int getFurnitureOnTile( Position pos );
+
+	bool isLineOfSight( Position a, Position b ) const;
 };
 
 #endif /* WORLD_H_ */

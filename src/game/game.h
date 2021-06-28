@@ -18,34 +18,116 @@
 #ifndef GAME_H_
 #define GAME_H_
 
+#include "../base/enums.h"
+
 #include <QObject>
 
 class Config;
+class NewGameSettings;
 
 class QTimer;
-class Grass;
-class Gnome;
-class Animal;
+
+class Inventory;
+class ItemHistory;
+class JobManager;
+class StockpileManager;
+class FarmingManager;
+class WorkshopManager;
+class RoomManager;
+class GnomeManager;
+class CreatureManager;
+class EventManager;
+class MechanismManager;
+class FluidManager;
+class NeighborManager;
+class MilitaryManager;
+class SoundManager;
+
+class PathFinder;
+class SpriteFactory;
+class World;
 
 class Game : public QObject
 {
-	Q_OBJECT
+	friend class Inventory;
+	friend class SpriteFactory;
+	friend class World;
 
+	friend class JobManager;
+	friend class StockpileManager;
+	friend class FarmingManager;
+	friend class WorkshopManager;
+	friend class RoomManager;
+	friend class GnomeManager;
+	friend class CreatureManager;
+	friend class EventManager;
+	friend class MechanismManager;
+	friend class FluidManager;
+	friend class NeighborManager;
+	friend class MilitaryManager;
+	friend class SoundManager;
+
+	friend class Gnome;
+	friend class GnomeTrader;
+	friend class Automaton;
+
+	Q_OBJECT
+	Q_DISABLE_COPY_MOVE( Game )
 public:
-	Game();
-	Game( bool isLoaded );
+	Game( QObject* parent );
+	Game() = delete;
 	virtual ~Game();
 
 	void save();
 
-private:
-	QTimer* m_timer = 0;
+	GameSpeed gameSpeed();
+	void setGameSpeed( GameSpeed speed );
 
-	int m_speed            = 0;
+	bool paused();
+	void setPaused( bool value );
+	void setHeartbeatResponse( int value );
+
+	void generateWorld( NewGameSettings* ngs );
+	void setWorld( int dimX, int dimY, int dimZ );
+	World* world();
+
+	Inventory* inv();
+	ItemHistory* ih();
+	JobManager* jm();
+	StockpileManager* spm();
+	FarmingManager* fm();
+	WorkshopManager* wsm();
+	World* w();
+	SpriteFactory* sf();
+	RoomManager* rm();
+	GnomeManager* gm();
+	CreatureManager* cm();
+	EventManager* em();
+	MechanismManager* mcm();
+	FluidManager* flm();
+	NeighborManager* nm();
+	MilitaryManager* mil();
+	PathFinder* pf();
+	SoundManager* sm();
+
+private:
+	QScopedPointer<World> m_world;
+	QScopedPointer<SpriteFactory> m_sf;
+	QScopedPointer<PathFinder> m_pf;
+
+	QPointer<QTimer> m_timer;
+	
+	QElapsedTimer m_upsTimer;
+	int m_upsCounter;
+	int m_upsCounter1;
+	int m_avgLoopTime;
+
 	int m_millisecondsSlow = 50;
 	int m_millisecondsFast = 5;
 
 	int m_maxLoopTime = 0;
+	int m_guiHeartbeat = 0;
+	int m_guiHeartbeatResponse = 0;
 
 	void processPlants();
 
@@ -56,6 +138,25 @@ private:
 
 	void autoSave();
 
+	bool m_paused         = true;
+	GameSpeed m_gameSpeed = GameSpeed::Normal;
+
+	QPointer<Inventory> m_inv;
+
+	QPointer<JobManager> m_jobManager;
+	QPointer<StockpileManager> m_spm;
+	QPointer<FarmingManager> m_farmingManager;
+	QPointer<WorkshopManager> m_workshopManager;
+	QPointer<RoomManager> m_roomManager;
+	QPointer<GnomeManager> m_gnomeManager;
+	QPointer<CreatureManager> m_creatureManager;
+	QPointer<EventManager> m_eventManager;
+	QPointer<MechanismManager> m_mechanismManager;
+	QPointer<FluidManager> m_fluidManager;
+	QPointer<NeighborManager> m_neighborManager;
+	QPointer<MilitaryManager> m_militaryManager;
+	QPointer<SoundManager> m_soundManager;
+
 public slots:
 	void loop();
 	void start();
@@ -65,6 +166,8 @@ public slots:
 signals:
 	void sendOverlayMessage( int id, QString text );
 	void signalTimeAndDate( int minute, int hour, int day, QString season, int year, QString sunStatus );
+	void signalKingdomInfo( QString name, QString info1, QString info2, QString info3 );
+	void signalHeartbeat( int value );
 	void signalPause( bool pause );
 	void signalEvent( unsigned int id, QString title, QString msg, bool pause, bool yesno );
 	void signalStartAutoSave();

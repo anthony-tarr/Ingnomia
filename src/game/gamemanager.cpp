@@ -24,17 +24,47 @@
 #include "../base/io.h"
 #include "../base/pathfinder.h"
 #include "../base/util.h"
+#include "../base/selection.h"
+
 #include "../game/game.h"
 #include "../game/mechanismmanager.h"
 #include "../game/militarymanager.h"
 #include "../game/newgamesettings.h"
 #include "../game/world.h"
-#include "../game/worldgenerator.h"
 #include "../gfx/spritefactory.h"
 #include "../gui/eventconnector.h"
 #include "../gui/mainwindow.h"
 #include "../gui/mainwindowrenderer.h"
 #include "../gui/strings.h"
+
+#include "../game/inventory.h"
+#include "../game/creaturemanager.h"
+#include "../game/eventmanager.h"
+#include "../game/farmingmanager.h"
+#include "../game/fluidmanager.h"
+#include "../game/gnomemanager.h"
+#include "../game/mechanismmanager.h"
+#include "../game/roommanager.h"
+#include "../game/soundmanager.h"
+#include "../game/stockpilemanager.h"
+#include "../game/workshopmanager.h"
+
+
+#include "../gui/aggregatoragri.h"
+#include "../gui/aggregatorcreatureinfo.h"
+#include "../gui/aggregatordebug.h"
+#include "../gui/aggregatorinventory.h"
+#include "../gui/aggregatorpopulation.h"
+#include "../gui/aggregatorrenderer.h"
+#include "../gui/aggregatorstockpile.h"
+#include "../gui/aggregatortileinfo.h"
+#include "../gui/aggregatorworkshop.h"
+#include "../gui/aggregatorneighbors.h"
+#include "../gui/aggregatormilitary.h"
+#include "../gui/aggregatorsettings.h"
+#include "../gui/aggregatorloadgame.h"
+#include "../gui/aggregatorselection.h"
+#include "../gui/aggregatorsound.h"
 
 #include <QDateTime>
 #include <QDebug>
@@ -45,43 +75,67 @@
 GameManager::GameManager( QObject* parent ) :
 	QObject( parent )
 {
-	m_gameThread.start();
+	qRegisterMetaType<GameSpeed>();
+
+	m_eventConnector = new EventConnector( this );
+	Global::eventConnector = m_eventConnector;
+	Global::util = new Util( nullptr );
+
+	Global::newGameSettings = new NewGameSettings( this );
+
 	GameState::init();
 
-	connect( this, &GameManager::signalUpdatePaused, &EventConnector::getInstance(), &EventConnector::onUpdatePause );
-	connect( this, &GameManager::signalUpdateGameSpeed, &EventConnector::getInstance(), &EventConnector::onUpdateGameSpeed );
-
-	EventConnector::getInstance().moveToThread( &m_gameThread );
 }
 
 GameManager::~GameManager()
 {
-	m_gameThread.terminate();
-	m_gameThread.wait();
-
 	if ( m_game )
 	{
 		delete m_game;
 	}
 }
 
-void GameManager::setShowMainMenu( bool value )
+EventConnector* GameManager::eventConnector()
 {
-	m_showMainMenu = value;
+	return m_eventConnector;
 }
 
-void GameManager::startNewGame( std::function<void( void )> callback )
+void GameManager::setShowMainMenu( bool value )
+{
+	m_eventConnector->emitPause( true );
+	m_eventConnector->emitInMenu( value );
+	
+	if( m_game )
+	{
+		m_game->setPaused( true );
+	}
+}
+
+void GameManager::endCurrentGame()
+{
+	m_eventConnector->emitStopGame();
+
+	if ( m_game )
+	{
+		delete m_game;
+		Global::sel = nullptr;
+		Global::util = new Util( nullptr );
+	}
+}
+
+void GameManager::startNewGame()
 {
 	qDebug() << "GameManger: New game";
 
 	// create new random kingdom name
 
 	// save current settings for fast create new game
-	NewGameSettings::getInstance().save();
+	Global::newGameSettings->save();
 	
 	// check if folder exists, set new save folder name if yes
 	createNewGame();
-	callback();
+	
+	m_eventConnector->sendResume();
 }
 
 void GameManager::setUpNewGame()
@@ -89,7 +143,7 @@ void GameManager::setUpNewGame()
 	// check if folder exists, set new save folder name if yes
 }
 
-void GameManager::continueLastGame( std::function<void( bool )> callback )
+void GameManager::continueLastGame()
 {
 	//get last save
 	QString folder = QStandardPaths::writableLocation( QStandardPaths::DocumentsLocation ) + "/My Games/Ingnomia/save/";
@@ -111,133 +165,135 @@ void GameManager::continueLastGame( std::function<void( bool )> callback )
 
 			if ( IO::saveCompatible( folder + gameDir + "/" ) )
 			{
-				loadGame( folder + gameDir + "/", callback );
+				loadGame( folder + gameDir + "/" );
 				return;
 			}
 		}
 	}
-
-	callback( false );
+	m_eventConnector->sendLoadGameDone( false );
 }
 
 void GameManager::init()
 {
-	// Temporarily stop thread, so we can safely destroy the game
-	m_gameThread.quit();
-	m_gameThread.wait();
+	m_eventConnector->emitStopGame();
 
 	if ( m_game )
 	{
 		delete m_game;
 	}
-
-	m_gameThread.start();
-
 	// reset everything and initialize components;
 	Global::reset();
-
-	emit stopGame();
-
+	
 	GameState::init();
 
 	if ( !S::gi().init() )
 	{
 		qDebug() << "Failed to init translation.";
-		exit( 0 );
-	}
-
-	if ( !Global::sf().init() )
-	{
-		qDebug() << "Failed to init SpriteFactory.";
-		exit( 0 );
+		abort();
 	}
 }
 
-void GameManager::loadGame( QString folder, std::function<void( bool )> callback )
+void GameManager::loadGame( QString folder )
 {
 	init();
+	
+	m_game = new Game( this );
+	m_eventConnector->setGamePtr( m_game );
 
-	Config::getInstance().set( "NoRender", true );
-
-	IO io;
+	IO io( m_game, this) ;
 	connect( &io, &IO::signalStatus, this, &GameManager::onGeneratorMessage );
 	if ( io.load( folder ) )
 	{
-		m_game = new Game( true );
-		connect( this, &GameManager::stopGame, EventConnector::getInstance().aggregatorRenderer(), &AggregatorRenderer::onWorldParametersChanged );
-		connect( this, &GameManager::startGame, m_game, &Game::start );
+		Global::util = new Util( m_game );
+		Global::sel = new Selection( m_game );
 
-		qRegisterMetaType<QSet<unsigned int>>();
-		connect( m_game, &Game::signalUpdateTileInfo, EventConnector::getInstance().aggregatorTileInfo(), &AggregatorTileInfo::onUpdateAnyTileInfo );
-		connect( m_game, &Game::signalUpdateStockpile, EventConnector::getInstance().aggregatorStockpile(), &AggregatorStockpile::onUpdateAfterTick );
-
-		connect( m_game, &Game::signalUpdateTileInfo, EventConnector::getInstance().aggregatorRenderer(), &AggregatorRenderer::onUpdateAnyTileInfo );
-
-		connect( m_game, &Game::signalTimeAndDate, &EventConnector::getInstance(), &EventConnector::onTimeAndDate );
-		m_game->sendTime();
-		EventConnector::getInstance().onViewLevel( Config::getInstance().get( "viewLevel" ).toInt() );
-
-		Config::getInstance().set( "NoRender", false );
-
-		m_game->moveToThread( &m_gameThread );
-
-		Config::getInstance().set( "gameRunning", true );
-		GameState::setAcceptChangeSets( true );
-
-		m_showMainMenu = false;
-
-		emit startGame();
-		callback( true );
+		postCreationInit();
+		m_eventConnector->sendLoadGameDone( true );
 	}
 	else
 	{
 		qDebug() << "failed to load";
-		callback( false );
+		m_eventConnector->sendLoadGameDone( false );
 	}
 }
 
 void GameManager::createNewGame()
 {
 	init();
-
-	m_game = new Game();
-
-	World& world = Global::w();
-
-	WorldGenerator wg;
-	connect( &wg, &WorldGenerator::signalStatus, this, &GameManager::onGeneratorMessage );
-	wg.generate();
-
-	Global::mcm().init();
-	Global::mil().init();
-	Global::w().regionMap().initRegions();
-	PathFinder::getInstance().init();
-	Util::initAllowedInContainer();
-
-	Config::getInstance().set( "NoRender", false );
+	m_game = new Game( this );
+	m_eventConnector->setGamePtr( m_game );
+	m_game->generateWorld( Global::newGameSettings );
 	
-	EventConnector::getInstance().onViewLevel( Config::getInstance().get( "viewLevel" ).toInt() );
-	m_game->moveToThread( &m_gameThread );
+	Global::util = new Util( m_game );
+	Global::sel = new Selection( m_game );
 
-	Config::getInstance().set( "gameRunning", true );
-	GameState::setAcceptChangeSets( true );
+	GameState::peaceful = Global::newGameSettings->isPeaceful();
 
-	m_showMainMenu = false;
+	postCreationInit();
+}
 
-	connect( this, &GameManager::stopGame, EventConnector::getInstance().aggregatorRenderer(), &AggregatorRenderer::onWorldParametersChanged );
-	connect( this, &GameManager::startGame, m_game, &Game::start );
+
+void GameManager::postCreationInit()
+{
+	m_game->mil()->init();
+
+	m_eventConnector->aggregatorAgri()->init( m_game );
+	m_eventConnector->aggregatorCreatureInfo()->init( m_game );
+	m_eventConnector->aggregatorInventory()->init( m_game );
+	m_eventConnector->aggregatorMilitary()->init( m_game );
+	m_eventConnector->aggregatorNeighbors()->init( m_game );
+	m_eventConnector->aggregatorPopulation()->init( m_game );
+	m_eventConnector->aggregatorRenderer()->init( m_game );
+	m_eventConnector->aggregatorStockpile()->init( m_game );
+	m_eventConnector->aggregatorTileInfo()->init( m_game );
+	m_eventConnector->aggregatorWorkshop()->init( m_game );
+	m_eventConnector->aggregatorSound()->init( m_game );
+
+	connect( m_game->fm(), &FarmingManager::signalFarmChanged, m_eventConnector->aggregatorAgri(), &AggregatorAgri::onUpdateFarm, Qt::QueuedConnection );
+	connect( m_game->fm(), &FarmingManager::signalPastureChanged, m_eventConnector->aggregatorAgri(), &AggregatorAgri::onUpdatePasture, Qt::QueuedConnection );
+	connect( m_eventConnector->aggregatorDebug(), &AggregatorDebug::signalTriggerEvent, m_game->em(), &EventManager::onDebugEvent );
+	connect( m_game->spm(), &StockpileManager::signalStockpileAdded, m_eventConnector->aggregatorStockpile(), &AggregatorStockpile::onOpenStockpileInfo, Qt::QueuedConnection );
+	connect( m_game->spm(), &StockpileManager::signalStockpileContentChanged, m_eventConnector->aggregatorStockpile(), &AggregatorStockpile::onUpdateStockpileContent, Qt::QueuedConnection );
+	connect( m_game->wsm(), &WorkshopManager::signalJobListChanged, m_eventConnector->aggregatorWorkshop(), &AggregatorWorkshop::onCraftListChanged, Qt::QueuedConnection );
+
+	connect( m_game->sm(), &SoundManager::signalPlayEffect, m_eventConnector->aggregatorSound(), &AggregatorSound::onPlayEffect, Qt::QueuedConnection );
+
+	connect( m_game->em(), &EventManager::signalUpdateMission, m_eventConnector->aggregatorNeighbors(), &AggregatorNeighbors::onUpdateMission, Qt::QueuedConnection );
+
+	connect( m_game->inv(), &Inventory::signalAddItem, m_eventConnector->aggregatorInventory(), &AggregatorInventory::onAddItem, Qt::QueuedConnection );
+	connect( m_game->inv(), &Inventory::signalRemoveItem, m_eventConnector->aggregatorInventory(), &AggregatorInventory::onRemoveItem, Qt::QueuedConnection );
+
+	connect( m_game, &Game::signalTimeAndDate, m_eventConnector, &EventConnector::onTimeAndDate );
+	connect( m_game, &Game::signalKingdomInfo, m_eventConnector, &EventConnector::onKingdomInfo );
+	connect( m_game, &Game::signalHeartbeat, m_eventConnector, &EventConnector::onHeartbeat );
+
+	
+	Global::util->initAllowedInContainer();
+	m_eventConnector->onViewLevel( GameState::viewLevel );
+	m_eventConnector->emitInMenu( false );
+
+	connect( m_eventConnector, &EventConnector::stopGame, m_eventConnector->aggregatorRenderer(), &AggregatorRenderer::onWorldParametersChanged );
+	connect( m_eventConnector, &EventConnector::startGame, m_game, &Game::start );
+	
+	connect( m_eventConnector, &EventConnector::signalCameraPosition, m_eventConnector->aggregatorSound(), &AggregatorSound::onCameraPosition, Qt::QueuedConnection );
+
 
 	qRegisterMetaType<QSet<unsigned int>>();
-	connect( m_game, &Game::signalUpdateTileInfo, EventConnector::getInstance().aggregatorTileInfo(), &AggregatorTileInfo::onUpdateAnyTileInfo );
-	connect( m_game, &Game::signalUpdateStockpile, EventConnector::getInstance().aggregatorStockpile(), &AggregatorStockpile::onUpdateAfterTick );
-
-	connect( m_game, &Game::signalUpdateTileInfo, EventConnector::getInstance().aggregatorRenderer(), &AggregatorRenderer::onUpdateAnyTileInfo );
-
-	connect( m_game, &Game::signalTimeAndDate, &EventConnector::getInstance(), &EventConnector::onTimeAndDate );
+	connect( m_game, &Game::signalUpdateTileInfo,  m_eventConnector->aggregatorTileInfo(), &AggregatorTileInfo::onUpdateAnyTileInfo );
+	connect( m_game, &Game::signalUpdateStockpile, m_eventConnector->aggregatorStockpile(), &AggregatorStockpile::onUpdateAfterTick );
+	connect( m_game, &Game::signalUpdateTileInfo,  m_eventConnector->aggregatorRenderer(), &AggregatorRenderer::onUpdateAnyTileInfo );
+	connect( m_game, &Game::signalTimeAndDate,     m_eventConnector, &EventConnector::onTimeAndDate );
 	m_game->sendTime();
 
-	//thread1->setPriority( QThread::HighPriority );
-	emit startGame();
+	connect( Global::sel, &Selection::signalActionChanged, m_eventConnector->aggregatorSelection(), &AggregatorSelection::onActionChanged, Qt::QueuedConnection );
+	connect( Global::sel, &Selection::signalFirstClick, m_eventConnector->aggregatorSelection(), &AggregatorSelection::onUpdateFirstClick, Qt::QueuedConnection );
+	connect( Global::sel, &Selection::signalSize, m_eventConnector->aggregatorSelection(), &AggregatorSelection::onUpdateSize, Qt::QueuedConnection );
+	Global::sel->updateGui();
+
+	m_eventConnector->aggregatorInventory()->update();
+
+	m_eventConnector->emitPause( m_game->paused() );
+	m_eventConnector->emitStartGame();
 }
 
 void GameManager::onGeneratorMessage( QString message )
@@ -247,10 +303,67 @@ void GameManager::onGeneratorMessage( QString message )
 
 void GameManager::saveGame()
 {
-	bool paused = m_paused;
+	if( m_game )
+	{
+		bool paused = m_game->paused();
+		m_game->setPaused( true );
+		IO io( m_game, this );
+		io.save();
+		m_game->setPaused( paused );
 
-	m_paused = true;
-	IO::save();
+		m_eventConnector->sendResume();
+	}
+}
 
-	m_paused = paused;
+GameSpeed GameManager::gameSpeed()
+{
+	if( m_game )
+	{
+		return m_game->gameSpeed();
+	}
+	return GameSpeed::Normal;
+}
+void GameManager::setGameSpeed( GameSpeed speed )
+{
+	if( m_game )
+	{
+		if( m_game->gameSpeed() != speed )
+		{
+			m_game->setGameSpeed( speed );
+			m_eventConnector->emitGameSpeed( m_game->gameSpeed() );
+		}
+	}
+}
+
+bool GameManager::paused()
+{
+	if( m_game )
+	{
+		return m_game->paused();
+	}
+	return true;
+}
+
+void GameManager::setPaused( bool value )
+{
+	if( m_game )
+	{
+		if( m_game->paused() != value )
+		{
+			m_game->setPaused( value );
+			m_eventConnector->emitPause( value );
+		}
+	}
+}
+void GameManager::setHeartbeatResponse( int value )
+{
+	if( m_game )
+	{
+		m_game->setHeartbeatResponse( value );
+	}
+}
+
+Game* GameManager::game()
+{ 
+	return m_game; 
 }

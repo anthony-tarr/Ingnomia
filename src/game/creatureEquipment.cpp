@@ -24,6 +24,7 @@ QVariantMap EquipmentItem::serialize()
 	out.insert( "Material", material );
 	out.insert( "ItemID", itemID );
 	out.insert( "MaterialID", materialID );
+	out.insert( "AllMats", allMats );
 	return out;
 }
 
@@ -33,6 +34,7 @@ EquipmentItem::EquipmentItem( const QVariantMap& in )
 	material   = in.value( "Material" ).toString();
 	itemID     = in.value( "ItemID" ).toUInt();
 	materialID = in.value( "MaterialID" ).toUInt();
+	allMats	   = in.value( "AllMats" ).toStringList();
 }
 
 QList<unsigned int> Equipment::wornItems() const
@@ -96,7 +98,7 @@ Equipment::Equipment( const QVariantMap& in )
 	shirtColor = in.value( "ShirtColor" ).toInt();
 
 	uniformID = in.value( "UniformID" ).toUInt();
-	roomID    = in.value( "roomID" ).toUInt();
+	roomID    = in.value( "RoomID" ).toUInt();
 
 	auto vmItems  = in.value( "Items" ).toMap();
 	head          = EquipmentItem( vmItems.value( "HeadArmor" ).toMap() );

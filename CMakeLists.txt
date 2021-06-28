@@ -1,32 +1,52 @@
 cmake_minimum_required(VERSION 3.16.0)
 # Disable release-builds without debug info
 set(CMAKE_CONFIGURATION_TYPES Debug RelWithDebInfo CACHE STRING INTERNAL FORCE)
+
+# Project version, 4 numbers representation
+set(DEFAULT_VERSION "0.8.8.0" CACHE STRING "Version" FORCE)
+# Set from CI only
+set(BUILD_ID "0" CACHE INTERNAL "")
+set(GIT_REPO "" CACHE INTERNAL "")
+set(GIT_REF "" CACHE INTERNAL "")
+set(GIT_SHA "" CACHE INTERNAL "")
+
 project(Ingnomia
-	VERSION 0.0.0
-	DESCRIPTION ""
+	VERSION ${DEFAULT_VERSION}
+	DESCRIPTION "Gnome city builder"
 	HOMEPAGE_URL "https://github.com/rschurade/Ingnomia"
 	LANGUAGES "CXX"
 )
 
-find_package(Qt5 REQUIRED QUIET COMPONENTS Core Xml Sql OpenGL Network)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake/modules")
 
-# Roots of libraries that don't use the standard directories
-set(NOESIS_ROOT "" CACHE PATH "Root to the NoesisGui sdk")
-set(STEAM_SDK_ROOT "" CACHE PATH "Root to the steam sdk")
+find_package(Qt5 REQUIRED QUIET COMPONENTS Core Xml Sql OpenGL)
+
+find_package(Steam REQUIRED)
+find_package(Noesis REQUIRED)
+
+if(WIN32)
+	set(SFML_STATIC_LIBRARIES TRUE)
+endif(WIN32)
+find_package(SFML REQUIRED COMPONENTS audio)
+set_target_properties(sfml-system PROPERTIES
+	MAP_IMPORTED_CONFIG_MINSIZEREL Release
+	MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release
+)
+set_target_properties(sfml-audio PROPERTIES
+	MAP_IMPORTED_CONFIG_MINSIZEREL Release
+	MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release
+)
 
 # Noesis license
 set(NOESIS_LICENSE_NAME "" CACHE STRING "Name")
 set(NOESIS_LICENSE_KEY "" CACHE STRING "Key")
 
+set(BUGSPLAT_DB "" CACHE STRING "BSDB")
+
 # Without this, paths are not relative in the sources list
 cmake_policy(SET CMP0076 NEW)
 
 include(GNUInstallDirs)
-
-if (UNIX)
-	include(FindPkgConfig)
-endif()
-
 
 # The program itself
 add_executable(${PROJECT_NAME})
@@ -42,17 +62,6 @@ set_target_properties(${PROJECT_NAME}
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set_property(GLOBAL PROPERTY AUTOGEN_SOURCE_GROUP "Generated")
 
-# Headers
-target_include_directories(${PROJECT_NAME}
-	PRIVATE
-		${NOESIS_ROOT}/Include
-		${NOESIS_ROOT}/Src/Packages/App/ApplicationLauncher/Include
-		${NOESIS_ROOT}/Src/Packages/App/Launcher/Include
-		${NOESIS_ROOT}/Src/Packages/App/Providers/Include
-		${NOESIS_ROOT}/Src/Packages/Render/GLRenderDevice/Include
-		${STEAM_SDK_ROOT}/public/steam
-)
-
 add_subdirectory(content) # Deployable content
 # Copy content to target directory
 add_custom_command(TARGET ${PROJECT_NAME}
@@ -63,60 +72,28 @@ add_custom_command(TARGET ${PROJECT_NAME}
 )
 
 if(WIN32)
+	set(RC_SOURCES
+		${PROJECT_NAME}.ico
+		windows/${PROJECT_NAME}.rc
+		windows/${PROJECT_NAME}.manifest
+		windows/resource.h
+	)
 	target_sources(${PROJECT_NAME}
 		PRIVATE
-			${PROJECT_NAME}.rc
-			${PROJECT_NAME}.ico
-			${PROJECT_NAME}.manifest
+			${RC_SOURCES}
 	)
+
 endif()
 
 target_sources(${PROJECT_NAME}
 	PRIVATE
 		Changelog.md
 		README.md
+		LICENSE
 )
 
 add_subdirectory(src) # Sources list
 add_subdirectory(3rdparty) # 3rd party dependencies
-
-if (UNIX)
-	# Shared libraries
-	pkg_check_modules(shared
-		REQUIRED IMPORTED_TARGET
-			Qt5Core
-			Qt5Xml
-			Qt5Sql
-			Qt5OpenGL
-			Qt5Network
-			gl
-	)
-endif()
-
-if(UNIX)
-	find_library(STEAM steam_api
-		HINTS
-			${STEAM_SDK_ROOT}/redistributable_bin/linux64
-	)
-else()
-	find_library(STEAM steam_api64
-		HINTS
-			${STEAM_SDK_ROOT}/redistributable_bin/win64
-	)
-endif()
-
-find_library(NOESIS Noesis
-	HINTS
-		${NOESIS_ROOT}/Bin/linux_x86_64
-		${NOESIS_ROOT}/Lib/windows_x86_64
-)
-
-# TODO add a target to compile the library from the Makefile in the sdk
-find_library(NOESIS_APP NoesisApp
-	HINTS
-		${NOESIS_ROOT}/Bin/linux_x86_64
-		${NOESIS_ROOT}/Lib/windows_x86_64
-)
 
 # Linking
 target_link_libraries(${PROJECT_NAME}
@@ -125,12 +102,11 @@ target_link_libraries(${PROJECT_NAME}
 		Qt5::Xml
 		Qt5::Sql
 		Qt5::OpenGL
-		Qt5::Network
-		${STEAM}
-		${NOESIS}
-		${NOESIS_APP}
+		Steam
+		NoesisApp
 		fastnoise
 		exprtk
+		sfml-audio
 )
 
 # Noesis license
@@ -138,6 +114,18 @@ configure_file(
 	${CMAKE_SOURCE_DIR}/src/gui/license.h.in
 	${CMAKE_SOURCE_DIR}/src/gui/license.h
 	@ONLY
+)
+
+configure_file(
+	${CMAKE_SOURCE_DIR}/src/version.h.in
+	${CMAKE_SOURCE_DIR}/src/version.h
+	@ONLY
+)
+
+target_sources(${PROJECT_NAME}
+	PRIVATE
+		${CMAKE_SOURCE_DIR}/src/gui/license.h.in
+		${CMAKE_SOURCE_DIR}/src/version.h.in
 )
 
 if(UNIX)
@@ -151,107 +139,80 @@ endif()
 get_target_property(SOURCE_LIST ${PROJECT_NAME} SOURCES)
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${SOURCE_LIST})
 
-# Default flags
-target_compile_definitions(${PROJECT_NAME}
-	PRIVATE
-		NS_DEBUG
-		NS_PROFILE
-)
-
 if(UNIX AND NOT (DEFINED ENV{CXXFLAGS} OR CMAKE_CXX_FLAGS))
 	set(CMAKE_CXX_FLAGS "-Wall -Wextra -g")
+	# Kill some overly verbose warnings
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unknown-pragmas -Wno-unused-parameter")
+	# But treat likely errors as actual errors
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror=missing-field-initializers -Werror=ignored-qualifiers -Werror=delete-non-virtual-dtor -Werror=unused-value")
 endif()
 
 if(MSVC)
-	SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /Gy /Oi /MP /GS- /W3 /permissive-")
-	SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /CGTHREADS:8 /PROFILE")
-	SET(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /Ob2")
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /Gy /Oi /MP /GS- /W3 /permissive- /w24458 /w34456 /w24702")
+	set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /CGTHREADS:8 /PROFILE")
+	set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} /Ob2")
 	set_target_properties(${PROJECT_NAME} PROPERTIES
 		LINK_FLAGS /SUBSYSTEM:WINDOWS
 	)
 	set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${PROJECT_NAME})
 endif()
 
+if(MSVC AND NOT BUGSPLAT_DB STREQUAL "")
+	find_package(BugSplat REQUIRED)
+
+	target_link_libraries(${PROJECT_NAME}
+		PRIVATE
+			BugSplat
+	)
+
+	get_target_property(BUGSPLAT_DLL BugSplat LOCATION)
+	get_target_property(BUGSPLAT_RC_DLL BugSplatRc LOCATION)
+	get_target_property(BUGSPLAT_SEND_DLL BugSplatSendReport LOCATION)
+	list(APPEND RUNTIME_DLLS ${BUGSPLAT_DLL} ${BUGSPLAT_RC_DLL} ${BUGSPLAT_SEND_DLL})
+endif()
+
 # Install target
-install(TARGETS ${PROJECT_NAME}
+install(
+	TARGETS ${PROJECT_NAME}
 	DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+
+get_target_property(STEAM_DLL Steam LOCATION)
+get_target_property(NOESIS_DLL Noesis LOCATION)
+list(APPEND RUNTIME_DLLS ${STEAM_DLL})
+list(APPEND RUNTIME_DLLS ${NOESIS_DLL})
+
+if(WIN32)
+	# Prebuilt SFML on Windows bundles OpenAL
+	get_filename_component(OPENAL_DLL "${SFML_DIR}" REALPATH)
+	get_filename_component(OPENAL_DLL "${OPENAL_DLL}" PATH)
+	get_filename_component(OPENAL_DLL "${OPENAL_DLL}" PATH)
+	get_filename_component(OPENAL_DLL "${OPENAL_DLL}" PATH)
+	set(OPENAL_DLL ${OPENAL_DLL}/bin/openal32.dll)
+	list(APPEND RUNTIME_DLLS ${OPENAL_DLL})
+endif(WIN32)
 
 install(
-	DIRECTORY
-	$<TARGET_FILE_DIR:${PROJECT_NAME}>/content
-	DESTINATION ${CMAKE_INSTALL_BINDIR}
+	FILES
+		${RUNTIME_DLLS}
+		Changelog.md
+		LICENSE
+	DESTINATION
+		${CMAKE_INSTALL_BINDIR}
 )
 
-if(UNIX)
-	install(FILES ${NOESIS}
+if(WIN32)
+	install(
+		FILES $<TARGET_PDB_FILE:${PROJECT_NAME}>
 		DESTINATION ${CMAKE_INSTALL_BINDIR}
-	)
-
-	install(FILES ${NOESIS_APP}
-		DESTINATION ${CMAKE_INSTALL_BINDIR}
-	)
-
-	install(FILES ${STEAM}
-		DESTINATION ${CMAKE_INSTALL_BINDIR}
+		OPTIONAL
 	)
 endif()
 
 # Deployment helpers for Windows
 if(WIN32)
-	if(Qt5_FOUND AND TARGET Qt5::qmake AND NOT TARGET Qt5::windeployqt)
-		get_target_property(_qt5_qmake_location Qt5::qmake IMPORTED_LOCATION)
-
-		execute_process(
-			COMMAND "${_qt5_qmake_location}" -query QT_INSTALL_PREFIX
-			RESULT_VARIABLE return_code
-			OUTPUT_VARIABLE qt5_install_prefix
-			OUTPUT_STRIP_TRAILING_WHITESPACE
-		)
-
-		set(imported_location "${qt5_install_prefix}/bin/windeployqt.exe")
-
-		if(EXISTS ${imported_location})
-			add_executable(Qt5::windeployqt IMPORTED)
-
-			set_target_properties(Qt5::windeployqt PROPERTIES
-				IMPORTED_LOCATION ${imported_location}
-			)
-		endif()
-	endif()
-
-	function(deployQt foo)
-		if(TARGET Qt5::windeployqt)
-			# execute windeployqt in a tmp directory after build
-			add_custom_command(TARGET ${foo}
-				POST_BUILD
-				COMMAND ${CMAKE_COMMAND} -E remove_directory "${CMAKE_CURRENT_BINARY_DIR}/windeployqt_$<CONFIG>"
-				COMMAND set PATH=%PATH%$<SEMICOLON>${qt5_install_prefix}/bin
-				# for deployment
-				COMMAND Qt5::windeployqt --pdb --no-translations --no-webkit2 --no-system-d3d-compiler --no-opengl-sw --dir "${CMAKE_CURRENT_BINARY_DIR}/windeployqt_$<CONFIG>" "$<TARGET_FILE_DIR:${foo}>/$<TARGET_FILE_NAME:${foo}>"
-				COMMAND
-					${CMAKE_COMMAND} -E copy_directory
-					"${CMAKE_CURRENT_BINARY_DIR}/windeployqt_$<CONFIG>/"
-					$<TARGET_FILE_DIR:${PROJECT_NAME}>
-			)
-
-			# copy deployment directory during installation
-			install(
-				DIRECTORY
-				"${CMAKE_CURRENT_BINARY_DIR}/windeployqt_$<CONFIG>/"
-				DESTINATION ${CMAKE_INSTALL_BINDIR}
-			)
-		endif()
-	endfunction()
-
-	deployQt(${PROJECT_NAME})
-
-	set(RUNTIME_DLLS
-		${STEAM_SDK_ROOT}/redistributable_bin/win64/steam_api64.dll
-		${NOESIS_ROOT}/Bin/windows_x86_64/Noesis.dll
-		${NOESIS_ROOT}/Bin/windows_x86_64/NoesisApp.dll
-		${NOESIS_ROOT}/Bin/windows_x86_64/NoesisApp.pdb
-	)
+	include(windeployqt)
+	windeployqt(${PROJECT_NAME})
 
 	add_custom_command(TARGET ${PROJECT_NAME}
 		POST_BUILD
@@ -261,16 +222,6 @@ if(WIN32)
 			$<TARGET_FILE_DIR:${PROJECT_NAME}>
 	)
 
-	install(
-		FILES
-		${RUNTIME_DLLS}
-		DESTINATION ${CMAKE_INSTALL_BINDIR}
-	)
-
 	INCLUDE_EXTERNAL_MSPROJECT("Blend" ${CMAKE_CURRENT_SOURCE_DIR}/gui/gui.csproj)
-
-	target_link_libraries(${PROJECT_NAME}
-		PRIVATE
-			Version.lib
-	)
+	set_target_properties("Blend" PROPERTIES EXCLUDE_FROM_ALL TRUE)
 endif()

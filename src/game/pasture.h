@@ -20,6 +20,7 @@
 #include "../base/position.h"
 #include "../game/animal.h"
 #include "../game/worldobject.h"
+#include "../game/job.h"
 
 #include <QHash>
 #include <QList>
@@ -28,11 +29,12 @@
 #include <QVariantMap>
 
 class Job;
+class Game;
 
 struct PastureField
 {
 	Position pos;
-	bool hasJob       = false;
+	QWeakPointer<Job> job;
 	unsigned int util = 0;
 };
 
@@ -61,7 +63,7 @@ struct PastureProperties
 
 	QSet<QString> foodSettings;
 
-	void serialize( QVariantMap& out );
+	void serialize( QVariantMap& out ) const;
 	PastureProperties() {};
 	PastureProperties( QVariantMap& in );
 };
@@ -69,34 +71,27 @@ struct PastureProperties
 class Pasture : public WorldObject
 {
 	friend class AggregatorAgri;
-
+	Q_DISABLE_COPY_MOVE( Pasture )
 public:
-	Pasture( QList<QPair<Position, bool>> tiles );
-	Pasture( QVariantMap vals );
+	Pasture( QList<QPair<Position, bool>> tiles, Game* game );
+	Pasture( QVariantMap vals, Game* game );
 	//Pasture( const Pasture& other );
 	~Pasture();
 
-	QVariant serialize();
+	QVariant serialize() const;
 
-	void onTick( quint64 tick );
+	void onTick( quint64 tick, int& count );
 
 	void addAnimal( unsigned int id );
 
-	unsigned int getJob( unsigned int gnomeID, QString skillID );
-	bool finishJob( unsigned int jobID );
-	bool giveBackJob( unsigned int jobID );
-	Job* getJob( unsigned int jobID );
-	bool hasJobID( unsigned int jobID );
-
-	bool removeTile( Position& pos );
-	void addTile( Position& pos );
+	bool removeTile( const Position & pos );
+	void addTile( const Position & pos );
 
 	void getInfo( int& numPlots, int& numMale, int& numFemale );
 
 	bool canDelete();
 	int countTiles();
 
-	void setInJob( unsigned int animalID );
 	void removeAnimal( unsigned int animalID );
 	void removeAllAnimals();
 
@@ -112,6 +107,7 @@ public:
 	Position randomFieldPos();
 	Position findShed();
 
+	QSet<QString>& foodSettings();
 	void addFoodSetting( QString itemSID, QString materialSID );
 	void removeFoodSetting( QString itemSID, QString materialSID );
 	void addFood( unsigned int itemID );
@@ -125,6 +121,10 @@ public:
 
 	bool harvestHay();
 	void setHarvestHay( bool harvest );
+	int maxHay();
+	void setMaxHay( int value );
+	int foodLevel();
+	int maxFoodLevel();
 
 	int maxNumber();
 	int animalSize();
@@ -140,15 +140,7 @@ public:
 private:
 	PastureProperties m_properties;
 
-	QMap<unsigned int, PastureField> m_fields;
+	QMap<unsigned int, PastureField*> m_fields;
 
 	QList<unsigned int> m_animals;
-	QSet<unsigned int> m_animalsInJob;
-
-	QMap<unsigned int, Job*> m_jobsOut;
-
-	Job* createJob( QString skillID );
-
-	Animal* checkAnimalOutsidePasture();
-	Animal* checkAnimalHarvestReady();
 };

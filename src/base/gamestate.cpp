@@ -93,10 +93,27 @@ QVariantMap GameState::allowedTrees;
 QVariantList GameState::addedMaterials;
 QVariantMap GameState::addedTranslations;
 
+int GameState::moveX = 0;
+int GameState::moveY = 0;
+float GameState::scale = 0.0;
+int GameState::viewLevel = 100;
+
+QList<GuiWatchedItem> GameState::watchedItemList;
+
+QHash<QString, int> GameState::materialSID2ID;
+QHash<int, QString> GameState::materialID2SID;
+QHash<QString, int> GameState::itemSID2ID;
+QHash<int, QString> GameState::itemID2SID;
+
+
 bool GameState::init()
 {
-	nextID = 1000000;
+	GameState::materialSID2ID.clear();
+	GameState::materialID2SID.clear();
 
+	GameState::watchedItemList.clear();
+
+	nextID = 1000000;
 	return true;
 }
 
@@ -173,6 +190,38 @@ void GameState::serialize( QVariantMap& out )
 	out.insert( "dimX", Global::dimX );
 	out.insert( "dimY", Global::dimY );
 	out.insert( "dimZ", Global::dimZ );
+
+	out.insert( "moveX", moveX );
+	out.insert( "moveY", moveY );
+	out.insert( "scale", scale );
+	out.insert( "viewLevel", viewLevel );
+
+	QVariantList qwil;
+	for( const auto& gwi : GameState::watchedItemList )
+	{
+		QVariantMap qwi;
+		qwi.insert( "category", gwi.category );
+		qwi.insert( "group", gwi.group );
+		qwi.insert( "item", gwi.item );
+		qwi.insert( "material", gwi.material );
+		qwil.append( qwi );
+	}
+	out.insert( "watchedItems", qwil );
+
+	QVariantMap vmIDs;
+	for( auto key : GameState::materialSID2ID.keys() )
+	{
+		vmIDs.insert( key, materialSID2ID.value( key ) );
+	}
+	out.insert( "mats2ids", vmIDs );
+
+	QVariantMap viIDs;
+	for( auto key : GameState::itemSID2ID.keys() )
+	{
+		viIDs.insert( key, itemSID2ID.value( key ) );
+	}
+	out.insert( "items2ids", viIDs );
+
 }
 
 void GameState::load( QVariantMap& vals )
@@ -186,6 +235,10 @@ void GameState::load( QVariantMap& vals )
 
 		tmp.insert( newKey, vals.value( key ) );
 	}
+
+	Global::dimX = tmp.value( "dimX" ).toInt();
+	Global::dimY = tmp.value( "dimY" ).toInt();
+	Global::dimZ = tmp.value( "dimZ" ).toInt();
 
 	alarm       = tmp.value( "alarm" ).toInt();
 	alarmRoomID = tmp.value( "alarmRoomID" ).toUInt();
@@ -289,9 +342,63 @@ void GameState::load( QVariantMap& vals )
 	addedMaterials    = tmp.value( "addedMaterials" ).toList();
 	addedTranslations = tmp.value( "addedTranslations" ).toMap();
 
-	Global::dimX = tmp.value( "dimX" ).toInt();
-	Global::dimY = tmp.value( "dimY" ).toInt();
-	Global::dimZ = tmp.value( "dimZ" ).toInt();
+	moveX = tmp.value( "moveX" ).toInt();
+	moveY = tmp.value( "moveY" ).toInt();
+	scale = qMax( tmp.value( "scale" ).toFloat(), 1.0f );
+	viewLevel = qMax( tmp.value( "viewLevel" ).toInt(), 100 );
+
+	GameState::watchedItemList.clear();
+	auto qwil = tmp.value( "watchedItems" ).toList();
+	for( auto qval : qwil )
+	{
+		QVariantMap qwi = qval.toMap();
+		GuiWatchedItem gwi{ qwi.value( "category" ).toString(), qwi.value( "group" ).toString(), qwi.value( "item" ).toString(), qwi.value( "material" ).toString() };
+		GameState::watchedItemList.append( gwi );
+	}
+
+	itemSID2ID.clear();
+	itemID2SID.clear();
+	QVariantMap viIDs= tmp.value( "items2ids" ).toMap();
+
+	if( viIDs.isEmpty() )
+	{
+		for( auto id : DB::ids( "Items" ) )
+		{
+			int rowid = DBH::rowID( "Items", id );
+			itemID2SID.insert( rowid, id );
+			itemSID2ID.insert( id, rowid );
+		}
+	}
+	else
+	{
+		for( auto key : viIDs.keys() )
+		{
+			itemID2SID.insert( viIDs.value( key ).toInt(), key );
+			itemSID2ID.insert( key, viIDs.value( key ).toInt() );
+		}
+	}
+
+	materialSID2ID.clear();
+	materialID2SID.clear();
+	QVariantMap vmIDs= tmp.value( "mats2ids" ).toMap();
+
+	if( vmIDs.isEmpty() )
+	{
+		for( auto id : DB::ids( "Materials" ) )
+		{
+			int rowid = DBH::rowID( "Materials", id );
+			materialID2SID.insert( rowid, id );
+			materialSID2ID.insert( id, rowid );
+		}
+	}
+	else
+	{
+		for( auto key : vmIDs.keys() )
+		{
+			materialID2SID.insert( vmIDs.value( key ).toInt(), key );
+			materialSID2ID.insert( key, vmIDs.value( key ).toInt() );
+		}
+	}
 }
 
 unsigned int GameState::createID()

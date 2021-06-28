@@ -25,6 +25,8 @@
 #include <QString>
 #include <QVariantMap>
 
+class Game;
+
 enum enumReqs
 {
 	SEL_NONE,
@@ -38,6 +40,7 @@ enum enumReqs
 	SEL_STOCKPILE,
 	SEL_ROOM,
 	SEL_ALLOW_BELL,
+	SEL_ALLOW_FURNITURE,
 	SEL_PASTURE,
 	SEL_WALKABLE,
 	SEL_MECHANISM,
@@ -58,14 +61,12 @@ enum enumReqs
 	SEL_ANYWALL
 };
 
-class Selection
+class Selection : public QObject
 {
+	Q_OBJECT
+
 private:
-	// Private Constructor
-	Selection();
-	// Stop the compiler generating methods of copy the object
-	Selection( Selection const& copy );            // Not Implemented
-	Selection& operator=( Selection const& copy ); // Not Implemented
+	QPointer<Game> g;
 
 	int m_rotation;
 	Position m_firstClick;
@@ -91,16 +92,8 @@ private:
 	bool m_changed = false;
 
 public:
+	Selection( Game* game );
 	~Selection();
-
-	static Selection& getInstance()
-	{
-		// The only instance
-		// Guaranteed to be lazy initialized
-		// Guaranteed that it will be destroyed correctly
-		static Selection instance;
-		return instance;
-	}
 
 	QVariantMap serialize();
 
@@ -162,7 +155,11 @@ public:
 		m_ctrlActive = active;
 	}
 
-	void setNetworkCommand( QVariantMap data );
-
 	bool changed();
+	void updateGui();
+
+signals:
+	void signalActionChanged( const QString action );
+	void signalFirstClick( const QString firstClick );
+	void signalSize( const QString size );
 };

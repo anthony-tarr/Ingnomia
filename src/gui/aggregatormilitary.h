@@ -22,6 +22,8 @@
 
 #include <QObject>
 
+class Game;
+
 struct GuiSquadGnome
 {
 	unsigned int id = 0;
@@ -90,7 +92,11 @@ public:
 	AggregatorMilitary( QObject* parent = nullptr );
 	~AggregatorMilitary();
 
+	void init( Game* game );
+
 private:
+	QPointer<Game> g;
+
 	QList<GuiSquad> m_squads;
 	QList<GuiTargetPriority> m_tmpPriorities;
 	QList<GuiMilRole> m_roles;
@@ -121,8 +127,11 @@ public slots:
 	void onRemoveRole( unsigned int id );
 	void onRenameRole( unsigned int id, QString newName );
 	void onSetRole( unsigned int gnomeID, unsigned int roleID );
+	void onSetRoleCivilian( unsigned int roleID, bool value );
 
 	void onSetArmorType( unsigned int roleID, QString slot, QString type, QString material );
+
+	void onSetAttitude( unsigned int squadID, QString type, MilAttitude attitude );
 
 signals:
 	void signalSquads( const QList<GuiSquad>& squads );

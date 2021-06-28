@@ -24,6 +24,8 @@
 #include "../game/gnome.h"
 #include "../game/militarymanager.h"
 
+class Game;
+
 struct GuiCreatureInfo
 {
 	QString name;
@@ -44,6 +46,8 @@ struct GuiCreatureInfo
 
 	Uniform uniform;
 	Equipment equipment;
+
+	QMap< QString, std::vector<unsigned char> > itemPics;
 };
 Q_DECLARE_METATYPE( GuiCreatureInfo )
 
@@ -55,20 +59,34 @@ class AggregatorCreatureInfo : public QObject
 public:
 	AggregatorCreatureInfo( QObject* parent = nullptr );
 
+	void init( Game* game );
+
 	void update();
 
 private:
+	QPointer<Game> g;
+
 	GuiCreatureInfo m_info;
+	QMap< QString, std::vector<unsigned char> > m_emptyPics;
 
 	unsigned int m_currentID = 0;
+	unsigned int m_previousID = 0;
+
+	void createItemImg( QString slot, EquipmentItem& eItem );
+	void createUniformImg( QString slot, const UniformItem& uItem, EquipmentItem& eItem );
+	void createEmptyUniformImg( QString spriteID );
 
 public slots:
 	void onRequestCreatureUpdate( unsigned int creatureID );
 	void onRequestProfessionList();
 	void onSetProfession( unsigned int gnomeID, QString profession );
 
+	void onRequestEmptySlotImages();
+
 signals:
 	void signalCreatureUpdate( const GuiCreatureInfo& info );
 	void signalProfessionList( const QStringList& profs );
 	
+	void signalEmptyPics( const QMap< QString, std::vector<unsigned char> >& emptyPics );
+
 };

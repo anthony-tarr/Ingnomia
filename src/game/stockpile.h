@@ -25,11 +25,12 @@
 #include <QHash>
 #include <QList>
 #include <QMap>
-#include <QMutex>
 #include <QPair>
 #include <QSize>
 #include <QThread>
 #include <QtGlobal>
+
+class Game;
 
 struct InventoryField
 {
@@ -64,11 +65,11 @@ class Job;
 
 class Stockpile : public WorldObject
 {
-
+	Q_DISABLE_COPY_MOVE( Stockpile )
 public:
-	Stockpile();
-	Stockpile( QList<QPair<Position, bool>> tiles );
-	Stockpile( QVariantMap vals );
+	Stockpile( Game* game );
+	Stockpile( QList<QPair<Position, bool>> tiles, Game* game );
+	Stockpile( QVariantMap vals, Game* game );
 	~Stockpile();
 
 	QVariant serialize();
@@ -106,8 +107,8 @@ public:
 	bool finishJob( unsigned int jobID );
 	bool giveBackJob( unsigned int jobID );
 
-	Job& getJob( unsigned int jobID );
-	bool hasJobID( unsigned int jobID );
+	QSharedPointer<Job> getJob( unsigned int jobID );
+	bool hasJobID( unsigned int jobID ) const;
 
 	// return true if last tile was removed
 	bool removeTile( Position& pos );
@@ -142,13 +143,16 @@ public:
 
 	bool suspendChanged();
 
-	void updateFilter();
-
 	bool stillHasJobs();
 
 	int countFields();
 
 	void setInfiNotFull( Position pos );
+
+	int capacity( unsigned int tileID );
+	int itemCount( unsigned int tileID );
+	int reserved( unsigned int tileID );
+
 
 private:
 	bool m_pullOthers = false;
@@ -165,7 +169,7 @@ private:
 
 	Filter m_filter;
 
-	QMap<unsigned int, Job*> m_jobsOut;
+	QMap<unsigned int, QSharedPointer<Job>> m_jobsOut;
 
 	QList<unsigned int> m_linkedWorkshops;
 

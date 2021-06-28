@@ -37,6 +37,8 @@
 #include <QString>
 
 class ProxyGameView;
+struct GuiBuildItem;
+struct GuiWatchedItem;
 
 namespace Noesis
 {
@@ -103,6 +105,7 @@ private:
 class NRequiredItem final : public NoesisApp::NotifyPropertyChangedBase
 {
 public:
+	NRequiredItem( QString sid, int amount, const QList<QPair<QString, int>>& mats );
 	NRequiredItem( QString sid, int amount );
 
 	const char* GetName() const;
@@ -126,82 +129,40 @@ private:
 	NS_DECLARE_REFLECTION( NRequiredItem, Noesis::BaseComponent )
 };
 
-enum class BuildItemType
-{
-	Workshop,
-	Item,
-	Terrain
-};
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 class BuildItem final : public Noesis::BaseComponent
 {
 public:
-	BuildItem( QString name, QString sid, BuildItemType type );
+	BuildItem( const GuiBuildItem& gbi, ProxyGameView* proxy );
 
 	const char* GetName() const;
 	QString sid() const;
 	Noesis::ObservableCollection<NRequiredItem>* requiredItems() const;
 
 private:
-	Noesis::String _name;
-	QString _sid;
-	BuildItemType _type;
-	Noesis::Ptr<Noesis::BitmapSource> _bitmapSource;
+	Noesis::String m_name;
+	QString m_sid;
+	BuildItemType m_type;
+	ProxyGameView* m_proxy = nullptr;
 
-	Noesis::Ptr<Noesis::ObservableCollection<NRequiredItem>> _requiredItems;
+	Noesis::Ptr<Noesis::BitmapSource> m_bitmapSource;
+
+	Noesis::Ptr<Noesis::ObservableCollection<NRequiredItem>> m_requiredItems;
+
+	const char* GetShowReplaceButton() const;
+	const char* GetShowFillHoleButton() const;
 
 	void onCmdBuild( BaseComponent* param );
 
 	const NoesisApp::DelegateCommand* GetCmdBuild() const;
 	const Noesis::ImageSource* getBitmapSource() const;
 
-	NoesisApp::DelegateCommand _cmdBuild;
+	NoesisApp::DelegateCommand m_cmdBuild;
 
 	NS_DECLARE_REFLECTION( BuildItem, Noesis::BaseComponent )
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-enum class ButtonSelection
-{
-	None,
-	Build,
-	Mine,
-	Agriculture,
-	Designation,
-	Job,
-	Magic
-};
-
-enum class BuildSelection
-{
-	None,
-	Workshop,
-	Wall,
-	Floor,
-	Stairs,
-	Ramps,
-	Containers,
-	Fence,
-	Furniture,
-	Utility
-};
-
-enum class ShownInfo
-{
-	None,
-	TileInfo,
-	Stockpile,
-	Workshop,
-	Agriculture,
-	Population,
-	CreatureInfo,
-	Debug,
-	Neighbors,
-	Military
-};
-
-
 struct GuiMessageEvent {
 	unsigned int id;
 	QString title;
@@ -220,9 +181,14 @@ public:
 	GameModel();
 
 	void setTimeAndDate( int minute, int hour, int day, QString season, int year, QString sunStatus );
+	void updateKingdomInfo( QString name, QString info1, QString info2, QString info3 );
 	void setViewLevel( int level );
-	void updatePause();
-	void updateGameSpeed();
+	void updatePause( bool value );
+	void updateGameSpeed( GameSpeed speed );
+	void updateRenderOptions( bool designation, bool jobs, bool walls, bool axles );
+
+	void updateBuildItems( const QList<GuiBuildItem>& items );
+	void updateWatchList( const QList<GuiWatchedItem>& list );
 
 	void eventMessage( unsigned int id, QString title, QString msg, bool pause, bool yesno );
 
@@ -233,6 +199,8 @@ public:
 	void onShowAgriculture( unsigned id );
 
 	void setShownInfo( ShownInfo info );
+
+	void OnCmdBack( BaseComponent* param );
 
 private:
 	void setGameSpeed( GameSpeed value );
@@ -251,6 +219,22 @@ private:
 	const char* getLevel() const;
 	const char* getSun() const;
 	const char* getTimeImagePath() const;
+
+	const char* getKingdomName() const;
+	const char* getKingdomInfo1() const;
+	const char* getKingdomInfo2() const;
+	const char* getKingdomInfo3() const;
+
+
+	bool getRenderDesignations() const;
+	bool getRenderJobs() const;
+	bool getRenderWalls() const;
+	bool getRenderAxles() const;
+
+	void setRenderJobs( bool value );
+	void setRenderDesignations( bool value );
+	void setRenderWalls( bool value );
+	void setRenderAxles( bool value );
 
 	const char* showCommandButtons() const;
 
@@ -280,6 +264,11 @@ private:
 	const char* getShowMilitary() const;
 	void setShowMilitary( bool value );
 
+	const char* getShowInventory() const;
+	void setShowInventory( bool value );
+
+	const char* getShowSelection() const;
+	void setShowSelection( bool value );
 
 	const char* getShowCreatureInfo() const;
 
@@ -287,10 +276,11 @@ private:
 	Noesis::ObservableCollection<BuildButton>* GetBuildButtons() const;
 	Noesis::ObservableCollection<BuildItem>* GetBuildItems() const;
 
+	Noesis::ObservableCollection<GameItem>* GetWatchList() const;
+
 	void OnCmdButtonCommand( BaseComponent* param );
 	void OnCmdCategory( BaseComponent* param );
 
-	void OnCmdBack( BaseComponent* param );
 	void OnCmdSimple( BaseComponent* param );
 
 	void setCategory( const char* cat );
@@ -300,13 +290,10 @@ private:
 
 	const NoesisApp::DelegateCommand* GetCmdButtonCommand() const;
 	const NoesisApp::DelegateCommand* GetCmdCategory() const;
-	const NoesisApp::DelegateCommand* GetCmdBack() const;
 	const NoesisApp::DelegateCommand* GetSimpleCommand() const;
 
 	const NoesisApp::DelegateCommand* GetCmdLeftCommandButton() const;
 	const NoesisApp::DelegateCommand* GetCmdRightCommandButton() const;
-
-	NoesisApp::DelegateCommand _cmdBack;
 
 	NoesisApp::DelegateCommand _cmdButtonCommand;
 	NoesisApp::DelegateCommand _cmdCategory;
@@ -316,12 +303,25 @@ private:
 	NoesisApp::DelegateCommand _cmdRightCommandButton;
 
 private:
-	Noesis::String _year;
-	Noesis::String _day;
-	Noesis::String _time;
-	Noesis::String _level;
-	Noesis::String _sun;
-	Noesis::String _timeImagePath;
+	Noesis::String m_year;
+	Noesis::String m_day;
+	Noesis::String m_time;
+	Noesis::String m_level;
+	Noesis::String m_sun;
+	Noesis::String m_timeImagePath;
+
+	Noesis::String m_kingdomName;
+	Noesis::String m_kingdomInfo1;
+	Noesis::String m_kingdomInfo2;
+	Noesis::String m_kingdomInfo3;
+
+	bool m_paused = false;
+	GameSpeed m_gameSpeed = GameSpeed::Normal;
+
+	bool m_renderDesignations = true;
+	bool m_renderJobs = true;
+	bool m_wallsLowered = false;
+	bool m_renderAxles = false;
 
 	ProxyGameView* m_proxy = nullptr;
 
@@ -338,6 +338,8 @@ private:
 	Noesis::Ptr<Noesis::ObservableCollection<CommandButton>> _commandButtons;
 	Noesis::Ptr<Noesis::ObservableCollection<BuildButton>> _buildButtons;
 	Noesis::Ptr<Noesis::ObservableCollection<BuildItem>> _buildItems;
+
+	Noesis::Ptr<Noesis::ObservableCollection<GameItem>> m_watchList;
 
 	void onCloseWindowCmd( BaseComponent* param );
 	const NoesisApp::DelegateCommand* GetCloseWindowCmd() const
@@ -368,6 +370,8 @@ private:
 
 	const char* getMessageHeader() const;
 	const char* getMessageText() const;
+
+	bool m_showSelection = true;
 
 	void onMessageButtonCmd( BaseComponent* param );
 	const NoesisApp::DelegateCommand* GetMessageButtonCmd() const

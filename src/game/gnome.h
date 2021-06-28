@@ -30,11 +30,9 @@ struct Uniform;
 
 class Gnome : public CanWork
 {
-	friend class GnomeWidget;
-
 public:
-	Gnome( Position& pos, QString name, Gender gender );
-	Gnome( QVariantMap& in );
+	Gnome( Position& pos, QString name, Gender gender, Game* game );
+	Gnome( QVariantMap& in, Game* game );
 	~Gnome();
 
 	virtual void init();
@@ -45,6 +43,8 @@ public:
 	QVariantList createSpriteDef( QString type, bool isBack );
 
 	virtual CreatureTickResult onTick( quint64 tickNumber, bool seasonChanged, bool dayChanged, bool hourChanged, bool minuteChanged );
+
+	void die() override;
 
 	// return true if no floor present
 	bool checkFloor();

@@ -22,6 +22,8 @@
 
 #include <QObject>
 
+class Game;
+
 struct ItemsSummary
 {
 	QString itemName;
@@ -40,6 +42,9 @@ struct GuiStockpileInfo
 	bool suspended         = false;
 	bool allowPullFromHere = false;
 	bool pullFromOthers    = false;
+	int capacity           = 0;
+	int itemCount          = 0;
+	int reserved           = 0;
 
 	Filter filter;
 
@@ -56,7 +61,11 @@ public:
 	AggregatorStockpile( QObject* parent = nullptr );
 	~AggregatorStockpile();
 
+	void init( Game* game );
+
 private:
+	QPointer<Game> g;
+
 	bool m_infoDirty    = false;
 	bool m_contentDirty = false;
 

@@ -17,17 +17,26 @@
 */
 #pragma once
 
+
 #include "../game/automaton.h"
 #include "../game/gnome.h"
 #include "../game/gnometrader.h"
 
 #include <QList>
 
+class Game;
+
 class GnomeManager : public QObject
 {
-	Q_OBJECT
+	friend class Gnome;
+	friend class GnomeTrader;
+	friend class Automaton;
 
+	Q_OBJECT
+	Q_DISABLE_COPY_MOVE( GnomeManager )
 private:
+	QPointer<Game> g;
+
 	QList<Gnome*> m_gnomes;
 	QList<Gnome*> m_deadGnomes;
 	QMap<unsigned int, Gnome*> m_gnomesByID;
@@ -38,15 +47,9 @@ private:
 
 	int m_startIndex = 0;
 
-	QHash<unsigned int, Job*> m_jobs;
-
 public:
-	GnomeManager();
+	GnomeManager( Game* parent );
 	~GnomeManager();
-
-	void init();
-	void reset();
-	void clear();
 
 	void loadProfessions();
 	void saveProfessions();
@@ -89,7 +92,6 @@ public:
 	}
 
 	void forceMoveGnomes( Position from, Position to );
-	bool setNetworkMove( unsigned int id, Position newPos, int facing );
 
 	QList<Gnome*> gnomesAtPosition( Position pos );
 	QList<Gnome*> deadGnomesAtPosition( Position pos );
@@ -99,12 +101,7 @@ public:
 
 	bool gnomeCanReach( unsigned int gnomeID, Position pos );
 
-	unsigned int getJob( unsigned int gnomeID, QString skillID );
-
-	bool finishJob( unsigned int jobID );
-	bool giveBackJob( unsigned int jobID );
-	Job* getJob( unsigned int jobID );
-	bool hasJobID( unsigned int jobID );
+	void createJobs();
 
 	void setInMission( unsigned int gnomeID, unsigned int missionID );
 
@@ -113,10 +110,12 @@ public:
 	unsigned int roleID( unsigned int gnomeID );
 	void setRoleID( unsigned int gnomeID, unsigned int roleID );
 
+	int numGnomes();
+
 private:
-	Job* getRefuelJob( Automaton* a );
-	Job* getInstallJob( Automaton* a );
-	Job* getUninstallJob( Automaton* a );
+	void getRefuelJob( Automaton* a );
+	void getInstallJob( Automaton* a );
+	void getUninstallJob( Automaton* a );
 
 signals:
 	void signalGnomeActivity( unsigned int id, QString skillID );

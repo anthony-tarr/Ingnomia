@@ -18,18 +18,20 @@
 #include "dbhelper.h"
 
 #include "../base/db.h"
+#include "../base/gamestate.h"
 
 QMap<QString, QString> DBHelper::m_spriteIDCache;
 QMap<QString, bool> DBHelper::m_spriteIsRandomCache;
-QMap<int, QString> DBHelper::m_materialSIDCache;
-QMap<int, QString> DBHelper::m_itemSIDCache;
-QMap<QString, int> DBHelper::m_materialUIDCache;
+QMap<QString, bool> DBHelper::m_spriteHasAnimCache;
+QMap<QString, QString> DBHelper::m_materialColorCache;
 QMap<QString, int> DBHelper::m_materialToolLevelCache;
-QMap<QString, int> DBHelper::m_itemUIDCache;
 QMap<int, bool> DBHelper::m_itemIsContainerCache;
 QMap<int, QString> DBHelper::m_qualitySIDCache;
 QMap<int, float> DBHelper::m_qualityModCache;
 QMap<QString, QString> DBHelper::m_itemGroupCache;
+QMap<QString, QMap<QString, QMultiMap<QString, QString>>> DBHelper::m_workshopCraftResults;
+
+QMutex DBHelper::m_mutex;
 
 /*
 QStringList DBHelper::getWorkPositions( QString jobID )
@@ -41,6 +43,7 @@ QStringList DBHelper::getWorkPositions( QString jobID )
 
 QString DBH::spriteID( QString itemID )
 {
+	QMutexLocker ml( &m_mutex );
 	if ( m_spriteIDCache.contains( itemID ) )
 	{
 		return m_spriteIDCache.value( itemID );
@@ -52,6 +55,7 @@ QString DBH::spriteID( QString itemID )
 
 bool DBHelper::spriteIsRandom( QString spriteID )
 {
+	QMutexLocker ml( &m_mutex );
 	if ( m_spriteIsRandomCache.contains( spriteID ) )
 	{
 		return m_spriteIsRandomCache.value( spriteID );
@@ -59,6 +63,30 @@ bool DBHelper::spriteIsRandom( QString spriteID )
 	bool isRandom = DB::select( "HasRandom", "Sprites", spriteID ).toBool();
 	m_spriteIsRandomCache.insert( spriteID, isRandom );
 	return isRandom;
+}
+
+bool DBHelper::spriteHasAnim( QString spriteID )
+{
+	QMutexLocker ml( &m_mutex );
+	if ( m_spriteHasAnimCache.contains( spriteID ) )
+	{
+		return m_spriteHasAnimCache.value( spriteID );
+	}
+	bool hasAnim = DB::select( "Anim", "Sprites", spriteID ).toBool();
+	m_spriteHasAnimCache.insert( spriteID, hasAnim );
+	return hasAnim;
+}
+
+QString DBHelper::materialColor( QString materialID )
+{
+	QMutexLocker ml( &m_mutex );
+	if ( m_materialColorCache.contains( materialID ) )
+	{
+		return m_materialColorCache.value( materialID );
+	}
+	QString color = DB::select( "Color", "Materials", materialID ).toString();
+	m_materialColorCache.insert( materialID, color );
+	return color;
 }
 
 int DBHelper::materialToolLevel( QString material )
@@ -78,46 +106,42 @@ int DBHelper::materialToolLevel( QString material )
 
 int DBH::materialUID( QString material )
 {
-	if ( m_materialUIDCache.contains( material ) )
+	if( !GameState::materialSID2ID.contains( material ) )
 	{
-		return m_materialUIDCache.value( material );
+		GameState::materialID2SID.insert( GameState::materialSID2ID.size(), material );
+		GameState::materialSID2ID.insert( material, GameState::materialSID2ID.size() );
 	}
-	int materialUID = DB::execQuery( "SELECT rowid FROM Materials WHERE ID = \"" + material + "\"" ).toInt();
-	m_materialUIDCache.insert( material, materialUID );
-	return materialUID;
+	return GameState::materialSID2ID.value( material );
 }
 
 QString DBH::materialSID( int material )
 {
-	if ( m_materialSIDCache.contains( material ) )
+	if ( GameState::materialID2SID.contains( material ) )
 	{
-		return m_materialSIDCache.value( material );
+		return GameState::materialID2SID.value( material );
 	}
-	QString materialSID = DB::execQuery( "SELECT ID FROM Materials WHERE rowid = \"" + QString::number( material ) + "\"" ).toString();
-	m_materialSIDCache.insert( material, materialSID );
-	return materialSID;
+	qDebug() << "***ERROR*** DBH::materialSID : no entry for material:" << material;
+	return "NONE";
 }
 
 int DBH::itemUID( QString item )
 {
-	if ( m_itemUIDCache.contains( item ) )
+	if( !GameState::itemSID2ID.contains( item ) )
 	{
-		return m_itemUIDCache.value( item );
+		GameState::itemID2SID.insert( GameState::itemSID2ID.size(), item );
+		GameState::itemSID2ID.insert( item, GameState::itemSID2ID.size() );
 	}
-	int itemUID = DB::execQuery( "SELECT rowid FROM Items WHERE ID = \"" + item + "\"" ).toInt();
-	m_itemUIDCache.insert( item, itemUID );
-	return itemUID;
+	return GameState::itemSID2ID.value( item );
 }
 
 QString DBH::itemSID( int item )
 {
-	if ( m_itemSIDCache.contains( item ) )
+	if ( GameState::itemID2SID.contains( item ) )
 	{
-		return m_itemSIDCache.value( item );
+		return GameState::itemID2SID.value( item );
 	}
-	QString itemSID = DB::execQuery( "SELECT ID FROM Items WHERE rowid = \"" + QString::number( item ) + "\"" ).toString();
-	m_itemSIDCache.insert( item, itemSID );
-	return itemSID;
+	qDebug() << "***ERROR*** DBH::itemSID : no entry for item:" << item;
+	return "NONE";
 }
 
 
@@ -127,7 +151,7 @@ bool DBHelper::itemIsContainer( int item )
 	{
 		return m_itemIsContainerCache.value( item );
 	}
-	bool isContainer = DB::select( "IsContainer", "Items", item ).toBool();
+	bool isContainer = DB::select( "IsContainer", "Items", DBH::itemSID( item ) ).toBool();
 	m_itemIsContainerCache.insert( item, isContainer );
 	return isContainer;
 }
@@ -167,6 +191,40 @@ float DBHelper::qualityMod( int rank )
 	}
 	m_qualityModCache.insert( rank, modifier );
 	return modifier;
+}
+
+QMap<QString, QMultiMap<QString, QString>> DBHelper::workshopPossibleCraftResults( QString workshopId )
+{
+	if ( m_workshopCraftResults.contains( workshopId ) )
+	{
+		return m_workshopCraftResults.value( workshopId );
+	}
+
+	QMap<QString, QMultiMap<QString, QString>> workshopProduces;
+
+	auto dbws = DB::workshop( workshopId );
+	if( !dbws )
+	{
+		// this should never be reached
+		return workshopProduces;
+	}
+	const auto craftIds = dbws->Crafts;
+
+	for ( const auto& craftId : craftIds )
+	{
+		QMultiMap<QString, QString> craftVariants;
+		auto itemSID = DB::select( "ItemID", "Crafts", craftId ).toString();
+		// can this workshop craft an item of that material?
+		auto possibleResultMatTypes = DB::select( "ResultMaterialTypes", "Crafts", craftId ).toString().split( "|" );
+		for ( const auto& materialType : possibleResultMatTypes )
+		{
+			craftVariants.insertMulti( materialType, craftId );
+		}
+		workshopProduces.insert( itemSID, craftVariants );
+	}
+
+	m_workshopCraftResults.insert( workshopId, workshopProduces );
+	return workshopProduces;
 }
 
 QString DBH::itemGroup( QString itemID )

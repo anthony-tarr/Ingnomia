@@ -33,7 +33,7 @@ Job::Job( QVariantMap in )
 {
 	m_id            = in.value( "ID" ).toUInt();
 	m_type          = in.value( "Type" ).toString();
-	m_requiredSKill = in.value( "RequiredSkill" ).toString();
+	m_requiredSkill = in.value( "RequiredSkill" ).toString();
 	m_description   = in.value( "Description" ).toString();
 	m_rotation      = in.value( "Rotation" ).value<quint8>();
 	m_noJobSprite   = in.value( "NoJobSprite" ).toBool();
@@ -64,18 +64,19 @@ Job::Job( QVariantMap in )
 		m_requiredItems.append( ri );
 	}
 
-	m_position             = in.value( "Position" );
-	m_posItemInput         = in.value( "PositionItemInput" );
-	m_posItemOutput        = in.value( "PositionItemOutput" );
-	m_toolPosition         = in.value( "ToolPosition" );
-	m_workPosition         = in.value( "WorkPosition" );
-	m_posibleWorkPositions = Util::variantList2Position( in.value( "PossibleWorkPositions" ).toList() );
-	m_origWorkPosOffsets   = Util::variantList2Position( in.value( "OriginalWorkPositions" ).toList() );
+	m_position              = in.value( "Position" );
+	m_posItemInput          = in.value( "PositionItemInput" );
+	m_posItemOutput         = in.value( "PositionItemOutput" );
+	m_toolPosition          = in.value( "ToolPosition" );
+	m_workPosition          = in.value( "WorkPosition" );
+	m_possibleWorkPositions = Global::util->variantList2Position( in.value( "PossibleWorkPositions" ).toList() );
+	m_origWorkPosOffsets    = Global::util->variantList2Position( in.value( "OriginalWorkPositions" ).toList() );
 
 	m_amount             = in.value( "Amount" ).toInt();
 	m_item               = in.value( "Item" ).toString();
 	m_material           = in.value( "Material" ).toString();
 	m_craftID            = in.value( "CraftID" ).toString();
+	m_craftJobID            = in.value( "CraftJobID" ).toUInt();
 	m_craft              = in.value( "CraftMap" ).toMap();
 	m_conversionMaterial = in.value( "ConversionMaterial" ).toString();
 
@@ -84,7 +85,7 @@ Job::Job( QVariantMap in )
 	m_automaton = in.value( "Automaton" ).toUInt();
 	m_mechanism = in.value( "Mechanism" ).toUInt();
 
-	m_itemsToHaul = Util::variantList2UInt( in.value( "ItemsToHaul" ).toList() );
+	m_itemsToHaul = Global::util->variantList2UInt( in.value( "ItemsToHaul" ).toList() );
 	m_spell       = in.value( "Spell" ).toString();
 }
 
@@ -93,7 +94,7 @@ QVariant Job::serialize() const
 	QVariantMap out;
 	out.insert( "ID", m_id );
 	out.insert( "Type", m_type );
-	out.insert( "RequiredSkill", m_requiredSKill );
+	out.insert( "RequiredSkill", m_requiredSkill );
 	out.insert( "Description", m_description );
 	out.insert( "Rotation", m_rotation );
 	out.insert( "NoJobSprite", m_noJobSprite );
@@ -129,31 +130,34 @@ QVariant Job::serialize() const
 	out.insert( "PositionItemOutput", m_posItemOutput.toString() );
 	out.insert( "ToolPosition", m_toolPosition.toString() );
 	out.insert( "WorkPosition", m_workPosition.toString() );
-	out.insert( "PossibleWorkPositions", Util::positionList2Variant( m_posibleWorkPositions ) );
-	out.insert( "OriginalWorkPositions", Util::positionList2Variant( m_origWorkPosOffsets ) );
+	out.insert( "PossibleWorkPositions", Global::util->positionList2Variant( m_possibleWorkPositions ) );
+	out.insert( "OriginalWorkPositions", Global::util->positionList2Variant( m_origWorkPosOffsets ) );
 
 	out.insert( "Amount", m_amount );
 	out.insert( "Item", m_item );
 	out.insert( "Material", m_material );
 	out.insert( "CraftID", m_craftID );
+	out.insert( "CraftJobID", m_craftJobID );
 	out.insert( "CraftMap", m_craft );
 	out.insert( "ConversionMaterial", m_conversionMaterial );
 
 	out.insert( "Stockpile", m_stockpile );
 	out.insert( "Automaton", m_automaton );
 	out.insert( "Mechanism", m_mechanism );
+	out.insert( "Animal", m_animal );
 
-	out.insert( "ItemsToHaul", Util::uintList2Variant( m_itemsToHaul ) );
+	out.insert( "ItemsToHaul", Global::util->uintList2Variant( m_itemsToHaul ) );
 	out.insert( "Spell", m_spell );
 
 	return out;
 }
 
+/*
 Job::Job( const Job& other )
 {
 	m_id            = other.m_id;
 	m_type          = other.m_type;
-	m_requiredSKill = other.m_requiredSKill;
+	m_requiredSkill = other.m_requiredSkill;
 	m_description   = other.m_description;
 	m_rotation      = other.m_rotation;
 	m_noJobSprite   = other.m_noJobSprite;
@@ -171,13 +175,13 @@ Job::Job( const Job& other )
 	m_requiredTool  = other.m_requiredTool;
 	m_requiredItems = other.m_requiredItems;
 
-	m_position             = other.m_position;
-	m_posItemInput         = other.m_posItemInput;
-	m_posItemOutput        = other.m_posItemOutput;
-	m_toolPosition         = other.m_toolPosition;
-	m_workPosition         = other.m_workPosition;
-	m_posibleWorkPositions = other.m_posibleWorkPositions;
-	m_origWorkPosOffsets   = other.m_origWorkPosOffsets;
+	m_position              = other.m_position;
+	m_posItemInput          = other.m_posItemInput;
+	m_posItemOutput         = other.m_posItemOutput;
+	m_toolPosition          = other.m_toolPosition;
+	m_workPosition          = other.m_workPosition;
+	m_possibleWorkPositions = other.m_possibleWorkPositions;
+	m_origWorkPosOffsets    = other.m_origWorkPosOffsets;
 
 	m_amount             = other.m_amount;
 	m_item               = other.m_item;
@@ -193,6 +197,7 @@ Job::Job( const Job& other )
 	m_itemsToHaul = other.m_itemsToHaul;
 	m_spell       = other.m_spell;
 }
+*/
 
 Job::~Job()
 {
@@ -214,11 +219,11 @@ void Job::setType( QString type )
 
 QString Job::requiredSkill() const
 {
-	return m_requiredSKill;
+	return m_requiredSkill;
 }
 void Job::setRequiredSkill( QString skill )
 {
-	m_requiredSKill = skill;
+	m_requiredSkill = skill;
 }
 
 void Job::setDescription( QString desc )
@@ -277,16 +282,16 @@ void Job::setWorkPos( const Position& pos )
 
 QList<Position> Job::possibleWorkPositions()
 {
-	return m_posibleWorkPositions;
+	return m_possibleWorkPositions;
 }
 
 void Job::addPossibleWorkPosition( const Position& wp )
 {
-	m_posibleWorkPositions.append( wp );
+	m_possibleWorkPositions.append( wp );
 }
 void Job::clearPossibleWorkPositions()
 {
-	m_posibleWorkPositions.clear();
+	m_possibleWorkPositions.clear();
 }
 
 QList<Position> Job::origWorkPosOffsets()
@@ -302,6 +307,12 @@ void Job::setOrigWorkPosOffsets( QString offsets )
 		m_origWorkPosOffsets.append( Position( wp ) );
 	}
 }
+
+void Job::setOrigWorkPosOffsets( QList<Position> pl )
+{
+	m_origWorkPosOffsets = pl;
+}
+
 
 bool Job::isWorked() const
 {
@@ -376,7 +387,7 @@ void Job::setComponentMissing( bool v )
 {
 	m_componentMissing = v;
 }
-bool Job::componenentMissing() const
+bool Job::componentMissing() const
 {
 	return m_componentMissing;
 }
@@ -448,6 +459,16 @@ void Job::setRequiredTool( QString toolID, quint8 level )
 {
 	m_requiredTool.type  = toolID;
 	m_requiredTool.level = level;
+
+	if ( toolID.isEmpty() )
+	{
+		m_requiredTool.available = true;
+	}
+}
+
+void Job::setRequiredToolAvailable( bool avail )
+{
+	m_requiredTool.available = avail;
 }
 
 void Job::setConversionMaterial( QString material )
@@ -545,12 +566,27 @@ QString Job::craftID() const
 	return m_craftID;
 }
 
+void Job::setCraftJobID( unsigned int craftJobID )
+{
+	m_craftJobID = craftJobID;
+}
+	
+unsigned int Job::craftJobID() const
+{
+	return m_craftJobID;
+}
+
 void Job::setDestroyOnAbort( bool value )
 {
 	m_destroyOnAbort = value;
 }
-	
+
 bool Job::destroyOnAbort() const
 {
 	return m_destroyOnAbort;
+}
+
+void Job::setPrio( int prio )
+{
+	m_priority = qMin( 9, qMax( 0, prio ) );
 }

@@ -22,6 +22,8 @@
 
 #include <QObject>
 
+class Game;
+
 struct GuiAnimal
 {
 	QString name;
@@ -31,7 +33,7 @@ struct GuiAnimal
 	int totalcount  = 0;
 	int maleCount   = 0;
 	int femaleCount = 0;
-	QString spriteSID;
+	QPixmap sprite;
 };
 Q_DECLARE_METATYPE( GuiAnimal )
 
@@ -58,7 +60,7 @@ struct GuiPlant
 	QString harvestedItem;
 	int itemCount  = 0;
 	int plantCount = 0;
-	QString spriteID;
+	QPixmap sprite;
 };
 Q_DECLARE_METATYPE( GuiPlant )
 
@@ -90,6 +92,15 @@ struct GuiFarmInfo
 };
 Q_DECLARE_METATYPE( GuiFarmInfo )
 
+struct GuiPastureFoodItem
+{
+	QString itemSID;
+	QString materialSID;
+	QString name;
+	bool checked = false;
+	QPixmap sprite;
+};
+
 struct GuiPastureInfo
 {
 	unsigned int ID = 0;
@@ -111,6 +122,13 @@ struct GuiPastureInfo
 	int maxMale    = 0;
 	int maxFemale  = 0;
 	int animalSize = 0;
+
+	int foodMax    = 0;
+	int foodCurrent= 0;
+	int hayMax     = 0;
+	int hayCurrent = 0;
+
+	QList<GuiPastureFoodItem> food;
 
 	GuiAnimal product;
 	QList<GuiPastureAnimal> animals;
@@ -146,7 +164,11 @@ public:
 	AggregatorAgri( QObject* parent = nullptr );
 	~AggregatorAgri();
 
+	void init( Game* game );
+
 private:
+	QPointer<Game> g;
+
 	bool m_AgriDirty             = false;
 	unsigned int m_currentTileID = 0;
 	AgriType m_currentType       = AgriType::Farm;
@@ -181,6 +203,9 @@ public slots:
 
 	void onSetButchering( unsigned int animalID, bool value );
 	void onRequestPastureAnimalInfo( unsigned int pastureID );
+	void onRequestPastureFoodInfo( unsigned int pastureID );
+
+	void onSetFoodItemChecked( unsigned int pastureID, QString itemSID, QString materialSID, bool checked );
 
 signals:
 	void signalShowAgri( unsigned int id );

@@ -16,6 +16,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "inventory.h"
+#include "game.h"
 
 #include "../base/config.h"
 #include "../base/db.h"
@@ -35,9 +36,12 @@
 #include <QJsonDocument>
 #include <QJsonValue>
 
-Inventory::Inventory()
+Inventory::Inventory( Game* parent ) :
+	g( parent ),
+	QObject( parent )
 {
-	//init();
+	m_itemHistory = new ItemHistory( this );
+	init();
 }
 
 Inventory::~Inventory()
@@ -54,6 +58,14 @@ Inventory::~Inventory()
 
 	m_foodItems.clear();
 	m_drinkItems.clear();
+
+	for ( const auto& octtreeGroup : m_octrees )
+	{
+		for (const auto& octree : octtreeGroup)
+		{
+			delete octree;
+		}
+	}
 }
 
 void Inventory::init()
@@ -87,7 +99,7 @@ void Inventory::init()
 				m_itemsSorted[categoryID][groupID].push_back( itemID );
 				m_hash[itemID];
 
-				for ( auto materialID : Util::possibleMaterialsForItem( itemID ) )
+				for ( auto materialID : Global::util->possibleMaterialsForItem( itemID ) )
 				{
 					m_hash[itemID].insert( materialID, QHash<unsigned int, Item*>() );
 				}
@@ -122,37 +134,6 @@ void Inventory::init()
 	{
 		m_drinkItemLookup.push_front( pqDrink.get() );
 	}
-}
-
-void Inventory::reset()
-{
-	m_items.clear();
-	m_positionHash.clear();
-	m_hash.clear();
-	m_foodItems.clear();
-	m_drinkItems.clear();
-
-	m_categoriesSorted.clear();
-	m_groupsSorted.clear();
-	m_itemsSorted.clear();
-
-	m_materialsInTypes.clear();
-	m_foodItemLookup.clear();
-	m_drinkItemLookup.clear();
-
-	for ( auto item : m_octrees.keys() )
-	{
-		for ( auto material : m_octrees[item].keys() )
-		{
-			delete m_octrees[item][material];
-		}
-	}
-
-	m_octrees.clear();
-
-	m_wealth = 0;
-
-	init();
 }
 
 void Inventory::saveFilter()
@@ -208,32 +189,27 @@ bool Inventory::itemExists( unsigned int itemID )
 
 unsigned int Inventory::createItem( Position pos, QString itemSID, QString materialSID )
 {
+	DBH::itemUID( itemSID );
 	//qDebug() << "create item " << pos.toString() << baseItem << material;
-	QMutexLocker ml( &m_mutex );
-
 	Item obj( pos, itemSID, materialSID );
-	Sprite* sprite = Global::sf().createSprite( itemSID, { materialSID } );
+	Sprite* sprite = g->m_sf->createSprite( itemSID, { materialSID } );
 	if ( sprite )
 	{
 		obj.setSpriteID( sprite->uID );
 	}
 	addObject( obj, itemSID, materialSID );
 
-	GameState::addChange2( NetworkCommand::ITEMCREATE, QJsonDocument::fromVariant( obj.serialize() ).toJson() );
-
 	return obj.id();
 }
 
 unsigned int Inventory::createItem( Position pos, QString itemSID, QList<unsigned int> components )
 {
+	DBH::itemUID( itemSID );
 	//qDebug() << "create item " << pos.toString() << itemSID << components;
-	QMutexLocker ml( &m_mutex );
-
 	QVariantList compList = DB::select2( "ItemID", "Items_Components", "ID", itemSID );
 
 	if ( compList.isEmpty() )
 	{ // item has no components, we use the first material
-		ml.unlock();
 		if ( components.size() )
 		{
 			auto item = getItem( components.first() );
@@ -257,6 +233,7 @@ unsigned int Inventory::createItem( Position pos, QString itemSID, QList<unsigne
 	{
 		// first component decides the material of the item for material level bonuses and other things
 		QString firstCompSID = compList.first().toMap().value( "ItemID" ).toString();
+		DBH::itemUID( firstCompSID );
 		QString firstMat     = materialSID( components.first() );
 		Item obj( pos, itemSID, firstMat );
 
@@ -276,14 +253,12 @@ unsigned int Inventory::createItem( Position pos, QString itemSID, QList<unsigne
 		}
 
 		// create combined sprite
-		Sprite* sprite = Global::sf().createSprite( itemSID, materialSIDs );
+		Sprite* sprite = g->m_sf->createSprite( itemSID, materialSIDs );
 		if ( sprite )
 		{
 			obj.setSpriteID( sprite->uID );
 		}
 		addObject( obj, itemSID, firstMat );
-
-		GameState::addChange2( NetworkCommand::ITEMCREATE, QJsonDocument::fromVariant( obj.serialize() ).toJson() );
 
 		return obj.id();
 	}
@@ -291,7 +266,7 @@ unsigned int Inventory::createItem( Position pos, QString itemSID, QList<unsigne
 
 unsigned int Inventory::createItem( Position pos, QString itemSID, QVariantList components )
 {
-	return createItem( pos, itemSID, Util::variantList2UInt( components ) );
+	return createItem( pos, itemSID, Global::util->variantList2UInt( components ) );
 }
 
 unsigned int Inventory::createItem( const QVariantMap& values )
@@ -306,7 +281,7 @@ unsigned int Inventory::createItem( const QVariantMap& values )
 		qDebug() << "missing materialSID" << values.value( "ID" ).toUInt() << "at" << values.value( "Position" ).toString();
 		return 0;
 	}
-	QMutexLocker lock( &m_mutex );
+	DBH::itemUID( values.value( "ItemSID" ).toString() );
 	//Item obj( pos, baseItem, material );
 	Item obj( values );
 
@@ -318,7 +293,7 @@ unsigned int Inventory::createItem( const QVariantMap& values )
 	Sprite* sprite = nullptr;
 	if ( obj.components().isEmpty() )
 	{
-		sprite = Global::sf().createSprite( baseItem, { material } );
+		sprite = g->m_sf->createSprite( baseItem, { material } );
 	}
 	else
 	{
@@ -328,23 +303,38 @@ unsigned int Inventory::createItem( const QVariantMap& values )
 			materialSIDs.push_back( DBH::materialSID( comp.materialUID ) );
 		}
 		// create combined sprite
-		sprite = Global::sf().createSprite( baseItem, materialSIDs );
+		sprite = g->m_sf->createSprite( baseItem, materialSIDs );
 	}
 	if ( sprite )
 	{
 		obj.setSpriteID( sprite->uID );
 	}
+
 	addObject( obj, baseItem, material );
 
 	return obj.id();
+}
+
+Octree* Inventory::octree( const QString& itemSID, const QString& materialSID )
+{
+	if ( !m_octrees.contains( itemSID ) || !m_octrees[itemSID].contains( materialSID ) )
+	{
+		int x = Global::dimX / 2;
+		int y = Global::dimY / 2;
+		int z = Global::dimZ / 2;
+		m_octrees[itemSID].insert( materialSID, new Octree( x, y, z, x, y, z ) );
+	}
+	return m_octrees[itemSID][materialSID];
 }
 
 void Inventory::addObject( Item& object, const QString& itemID, const QString& materialID )
 {
 	m_items.insert( object.id(), object );
 	Item* item = getItem( object.id() );
+	
+	Octree* ot = octree( itemID, materialID );
 
-	if ( !item->isPickedUp() )
+	if ( !item->isHeldBy() )
 	{
 		if ( m_positionHash.contains( item->getPos().toInt() ) )
 		{
@@ -358,36 +348,14 @@ void Inventory::addObject( Item& object, const QString& itemID, const QString& m
 		}
 
 		Position pos = item->getPos();
-		if ( m_octrees.contains( itemID ) )
+		ot->insertItem( pos.x, pos.y, pos.z, item->id() );
+		
+		if ( !item->isConstructed() && !item->isInContainer() )
 		{
-			if ( m_octrees[itemID].contains( materialID ) )
-			{
-				m_octrees[itemID][materialID]->insertItem( pos.x, pos.y, pos.z, item->id() );
-			}
-			else
-			{
-				int x = Global::dimX / 2;
-				int y = Global::dimY / 2;
-				int z = Global::dimZ / 2;
-				m_octrees[itemID].insert( materialID, new Octree( x, y, z, x, y, z ) );
-				m_octrees[itemID][materialID]->insertItem( pos.x, pos.y, pos.z, item->id() );
-			}
-		}
-		else
-		{
-			int x = Global::dimX / 2;
-			int y = Global::dimY / 2;
-			int z = Global::dimZ / 2;
-			m_octrees[itemID].insert( materialID, new Octree( x, y, z, x, y, z ) );
-			m_octrees[itemID][materialID]->insertItem( pos.x, pos.y, pos.z, item->id() );
+			g->m_world->setItemSprite( item->getPos(), object.spriteID() );
 		}
 
-		if ( !item->isConstructedOrEquipped() && !item->isInContainer() )
-		{
-			Global::w().setItemSprite( item->getPos(), object.spriteID() );
-		}
-
-		if ( item->isConstructedOrEquipped() || item->isInStockpile() )
+		if ( item->isConstructed() || item->isInStockpile() )
 		{
 			addToWealth( item );
 		}
@@ -410,19 +378,17 @@ void Inventory::addObject( Item& object, const QString& itemID, const QString& m
 	{
 		m_hash[itemID].insert( materialID, QHash<unsigned int, Item*>() );
 		m_hash[itemID][materialID].insert( item->id(), item );
-		Config::getInstance().set( "updateItemFilter", true );
 	}
 
-	Global::ih().plusItem( itemID, materialID );
+	m_itemHistory->plusItem( itemID, materialID );
 
 	m_itemsChanged = true;
 
-	//DB::createItem( object, itemID, materialID );
+	emit signalAddItem( itemID, materialID );
 }
 
 void Inventory::destroyObject( unsigned int id )
 {
-	QMutexLocker lock( &m_mutex );
 	if ( m_items.contains( id ) )
 	{
 		Item* item = getItem( id );
@@ -445,11 +411,12 @@ void Inventory::destroyObject( unsigned int id )
 			}
 
 			QString materialSID = DBH::materialSID( item->materialUID() );
-			QString itemSID     = DBH::id( "Items", item->itemUID() );
+			QString itemSID     = DBH::itemSID( item->itemUID() );
 
 			Position pos = item->getPos();
-			m_octrees[itemSID][materialSID]->removeItem( pos.x, pos.y, pos.z, id );
-
+			Octree* ot = octree( itemSID, materialSID );
+			ot->removeItem( pos.x, pos.y, pos.z, id );
+			
 			m_hash[itemSID][materialSID].remove( id );
 
 			m_foodItems.remove( id );
@@ -457,26 +424,24 @@ void Inventory::destroyObject( unsigned int id )
 			// finally remove object
 			m_items.remove( id );
 
-			Global::ih().minusItem( itemSID, materialSID );
+			m_itemHistory->minusItem( itemSID, materialSID );
+
+			emit signalRemoveItem( itemSID, materialSID );
 		}
 
-		//DB::destroyItem( id );
 		m_itemsChanged = true;
 	}
-
-	GameState::addChange2( NetworkCommand::ITEMDESTROY, QString::number( id ) );
 }
 
 unsigned int Inventory::getFirstObjectAtPosition( const Position& pos )
 {
-	//QMutexLocker lock( &m_mutex );
 	if ( m_positionHash.contains( pos.toInt() ) )
 	{
 		if ( !m_positionHash[pos.toInt()].empty() )
 		{
 			for ( auto itemUID : m_positionHash[pos.toInt()].values() )
 			{
-				if ( !isConstructedOrEquipped( itemUID ) && !isInContainer( itemUID ) )
+				if ( !isConstructed( itemUID ) && !isInContainer( itemUID ) )
 				{
 					return itemUID;
 				}
@@ -493,7 +458,6 @@ unsigned int Inventory::getFirstObjectAtPosition( const Position& pos )
 
 bool Inventory::getObjectsAtPosition( const Position& pos, PositionEntry& pe )
 {
-	//QMutexLocker lock( &m_mutex );
 	if ( m_positionHash.contains( pos.toInt() ) && !m_positionHash[pos.toInt()].empty() )
 	{
 		pe = m_positionHash[pos.toInt()];
@@ -557,9 +521,9 @@ bool Inventory::checkReachableItems( Position pos, bool allowInStockpile, int co
 	auto predicate = [&thisCount, this, allowInStockpile, pos, count]( unsigned int itemID ) -> bool {
 		auto item = getItem( itemID );
 
-		if ( item && ( allowInStockpile || !item->isInStockpile() ) && !item->isInJob() && !item->isConstructedOrEquipped() )
+		if ( item && ( allowInStockpile || !item->isInStockpile() ) && item->isFree() )
 		{
-			if ( Global::w().regionMap().checkConnectedRegions( pos, item->getPos() ) && Global::w().fluidLevel( item->getPos() ) < 6 )
+			if ( g->m_world->regionMap().checkConnectedRegions( pos, item->getPos() ) && g->m_world->fluidLevel( item->getPos() ) < 6 )
 			{
 				++thisCount;
 			}
@@ -570,25 +534,21 @@ bool Inventory::checkReachableItems( Position pos, bool allowInStockpile, int co
 		}
 		return true;
 	};
-
-	if ( m_octrees.contains( itemSID ) )
+	
+	if ( materialSID == "any" )
 	{
-		if ( materialSID == "any" )
+		for ( auto material : m_octrees[itemSID].keys() )
 		{
-			for ( auto materials : m_octrees[itemSID].keys() )
-			{
-				m_octrees[itemSID][materials]->visit( pos.x, pos.y, pos.z, predicate );
-				if ( thisCount >= count )
-					break;
-			}
+			Octree* ot = octree( itemSID, material );
+			ot->visit( pos.x, pos.y, pos.z, predicate );
+			if ( thisCount >= count )
+				break;
 		}
-		else
-		{
-			if ( m_octrees[itemSID].contains( materialSID ) )
-			{
-				m_octrees[itemSID][materialSID]->visit( pos.x, pos.y, pos.z, predicate );
-			}
-		}
+	}
+	else
+	{
+		Octree* ot = octree( itemSID, materialSID );
+		ot->visit( pos.x, pos.y, pos.z, predicate );
 	}
 
 	return thisCount >= count;
@@ -607,7 +567,7 @@ unsigned int Inventory::getItemAtPos( const Position& pos, bool allowInStockpile
 				auto item = getItem( itemID );
 				if ( item )
 				{
-					if ( itemSID == item->itemSID() && ( allowInStockpile || !item->isInStockpile() ) && !item->isInJob() && !item->isConstructedOrEquipped() )
+					if ( itemSID == item->itemSID() && ( allowInStockpile || !item->isInStockpile() ) && item->isFree() )
 					{
 						return itemID;
 					}
@@ -627,9 +587,7 @@ unsigned int Inventory::getItemAtPos( const Position& pos, bool allowInStockpile
 				{
 					if ( item->itemSID() == itemSID &&
 						 item->materialSID() == materialSID &&
-						 ( allowInStockpile || !item->isInStockpile() ) &&
-						 !item->isInJob() &&
-						 !item->isConstructedOrEquipped() )
+						 ( allowInStockpile || !item->isInStockpile() ) && item->isFree() )
 					{
 						return itemID;
 					}
@@ -651,9 +609,9 @@ QList<unsigned int> Inventory::getClosestItems( const Position& pos, bool allowI
 	auto predicate = [&out, this, allowInStockpile, pos, count]( unsigned int itemID ) -> bool {
 		auto item = getItem( itemID );
 
-		if ( item && ( allowInStockpile || !item->isInStockpile() ) && !item->isInJob() && !item->isConstructedOrEquipped() )
+		if ( item && ( allowInStockpile || !item->isInStockpile() ) && item->isFree() )
 		{
-			if ( Global::w().regionMap().checkConnectedRegions( pos, item->getPos() ) && Global::w().fluidLevel( item->getPos() ) < 6 )
+			if ( g->m_world->regionMap().checkConnectedRegions( pos, item->getPos() ) && g->m_world->fluidLevel( item->getPos() ) < 6 )
 			{
 				out.append( itemID );
 				if ( out.size() == count )
@@ -665,22 +623,18 @@ QList<unsigned int> Inventory::getClosestItems( const Position& pos, bool allowI
 		return true;
 	};
 
-	if ( m_octrees.contains( itemSID ) )
+	if ( materialSID == "any" )
 	{
-		if ( materialSID == "any" )
+		for ( auto material : m_octrees[itemSID].keys() )
 		{
-			for ( auto materials : m_octrees[itemSID].keys() )
-			{
-				m_octrees[itemSID][materials]->visit( pos.x, pos.y, pos.z, predicate );
-			}
+			Octree* ot = octree( itemSID, material );
+			ot->visit( pos.x, pos.y, pos.z, predicate );
 		}
-		else
-		{
-			if ( m_octrees[itemSID].contains( materialSID ) )
-			{
-				m_octrees[itemSID][materialSID]->visit( pos.x, pos.y, pos.z, predicate );
-			}
-		}
+	}
+	else
+	{
+		Octree* ot = octree( itemSID, materialSID );
+		ot->visit( pos.x, pos.y, pos.z, predicate );
 	}
 
 	return out;
@@ -713,29 +667,25 @@ QList<unsigned int> Inventory::getClosestItemsForStockpile( unsigned int stockpi
 		itemSID     = filterItem.first;
 		materialSID = filterItem.second;
 
-		if ( m_octrees.contains( itemSID ) )
+		if ( materialSID == "any" )
 		{
-			if ( materialSID == "any" )
+			for ( auto material : m_octrees[itemSID].keys() )
 			{
-				for ( auto materials : m_octrees[itemSID].keys() )
-				{
-					items.append( m_octrees[itemSID][materials]->query( pos.x, pos.y, pos.z ) );
-				}
+				Octree* ot = octree( itemSID, material );
+				items += ot->query( pos.x, pos.y, pos.z );
 			}
-			else
-			{
-				if ( m_octrees[itemSID].contains( materialSID ) )
-				{
-					items = m_octrees[itemSID][materialSID]->query( pos.x, pos.y, pos.z );
-				}
-			}
+		}
+		else
+		{
+			Octree* ot = octree( itemSID, materialSID );
+			items += ot->query( pos.x, pos.y, pos.z );
 		}
 
 		for ( auto itemID : items )
 		{
 			auto item = getItem( itemID );
 
-			if ( item && !item->isInJob() && !item->isConstructedOrEquipped() )
+			if ( item && item->isFree() )
 			{
 				if ( item->isInStockpile() == stockpileID )
 				{
@@ -749,7 +699,7 @@ QList<unsigned int> Inventory::getClosestItemsForStockpile( unsigned int stockpi
 				else
 				{
 					// item is in stockpile so we need to check if we can pull from stockpiles and if the source stockpile allows it
-					if ( allowInStockpile && Global::spm().hasPriority( stockpileID, item->isInStockpile() ) && Global::spm().allowsPull( item->isInStockpile() ) )
+					if ( allowInStockpile && g->m_spm->hasPriority( stockpileID, item->isInStockpile() ) && g->m_spm->allowsPull( item->isInStockpile() ) )
 					{
 						out.append( itemID );
 					}
@@ -770,7 +720,7 @@ QList<unsigned int> Inventory::tradeInventory( QString itemSID, QString material
 		{
 			for ( auto item : m_hash[itemSID][materialSID] )
 			{
-				if ( item->isInStockpile() && !item->isInJob() && !item->isConstructedOrEquipped() )
+				if ( item->isInStockpile() && item->isFree() )
 				{
 					out.append( item->id() );
 				}
@@ -791,7 +741,7 @@ QList<unsigned int> Inventory::tradeInventory( QString itemSID, QString material
 		{
 			for ( auto item : m_hash[itemSID][materialSID] )
 			{
-				if ( item->isInStockpile() && !item->isInJob() && !item->isConstructedOrEquipped() && item->quality() == quality )
+				if ( item->isInStockpile() && item->isFree() && item->quality() == quality )
 				{
 					out.append( item->id() );
 				}
@@ -842,25 +792,23 @@ void Inventory::moveItemToPos( unsigned int id, const Position& newPos )
 {
 	//qDebug() << "move item from " << item( id].getPos().toString() << " to " << newPos.toString();
 	// remove from position hash
-	pickUpItem( id );
+	pickUpItem( id, 1 );
 
 	putDownItem( id, newPos );
-	GameState::addChange( NetworkCommand::ITEMMOVE, { QString::number( id ), newPos.toString() } );
 }
 
-unsigned int Inventory::pickUpItem( unsigned int id )
+unsigned int Inventory::pickUpItem( unsigned int id, unsigned int creatureID )
 {
-	QMutexLocker lock( &m_mutex );
 	auto item = getItem( id );
 	if ( item )
 	{
-		item->setPickedUp( true );
+		item->setHeldBy( creatureID );
 
 		//remove from possible stockpile
 		unsigned int stockpileID = item->isInStockpile();
 		if ( stockpileID )
 		{
-			Global::spm().removeItem( stockpileID, item->getPos(), id );
+			g->m_spm->removeItem( stockpileID, item->getPos(), id );
 			item->setInStockpile( 0 );
 			removeFromWealth( item );
 		}
@@ -877,15 +825,8 @@ unsigned int Inventory::pickUpItem( unsigned int id )
 			m_positionHash.remove( pos.toInt() );
 		}
 
-		auto octree = m_octrees[item->itemSID()][item->materialSID()];
-		if ( octree )
-		{
-			octree->removeItem( pos.x, pos.y, pos.z, item->id() );
-		}
-		else
-		{
-			qDebug() << "!!! pickupitem octree for " << item->itemSID() << item->materialSID() << "doesn't exist!!!";
-		}
+		Octree* ot = octree( item->itemSID(), item->materialSID() );
+		ot->removeItem( pos.x, pos.y, pos.z, item->id() );
 
 		if ( item->isContainer() )
 		{
@@ -897,27 +838,23 @@ unsigned int Inventory::pickUpItem( unsigned int id )
 				{
 					QString inItemSID = inItem->itemSID();
 					QString inMatSID  = inItem->materialSID();
-					auto octree       = m_octrees[inItemSID][inMatSID];
-					if ( octree )
-					{
-						octree->removeItem( pos.x, pos.y, pos.z, inItemID );
-						m_positionHash[pos.toInt()].remove( inItemID );
-					}
+
+					Octree* ot2 = octree( inItemSID, inMatSID );
+					ot2->removeItem( pos.x, pos.y, pos.z, inItemID );
+					m_positionHash[pos.toInt()].remove( inItemID );
 				}
 			}
 		}
-
-		GameState::addChange2( NetworkCommand::ITEMPICKUP, QString::number( id ) );
 
 		unsigned int nextItemID = getFirstObjectAtPosition( pos );
 		auto nextItem           = getItem( nextItemID );
 		if ( nextItem )
 		{
-			Global::w().setItemSprite( pos, nextItem->spriteID() );
+			g->m_world->setItemSprite( pos, nextItem->spriteID() );
 		}
 		else
 		{
-			Global::w().setItemSprite( pos, 0 );
+			g->m_world->setItemSprite( pos, 0 );
 		}
 		return id;
 	}
@@ -926,12 +863,11 @@ unsigned int Inventory::pickUpItem( unsigned int id )
 
 unsigned int Inventory::putDownItem( unsigned int id, const Position& newPos )
 {
-	QMutexLocker lock( &m_mutex );
 	// insert at new pos in position hash
 	Item* item = getItem( id );
 	if ( item )
 	{
-		item->setPickedUp( false );
+		item->setHeldBy( 0 );
 		if ( m_positionHash.contains( newPos.toInt() ) )
 		{
 			m_positionHash[newPos.toInt()].insert( id );
@@ -943,15 +879,9 @@ unsigned int Inventory::putDownItem( unsigned int id, const Position& newPos )
 			m_positionHash.insert( newPos.toInt(), entry );
 		}
 
-		auto octree = m_octrees[item->itemSID()][item->materialSID()];
-		if ( octree )
-		{
-			octree->insertItem( newPos.x, newPos.y, newPos.z, item->id() );
-		}
-		else
-		{
-			qDebug() << "!!! putdownitem octree for " << item->itemSID() << item->materialSID() << "doesn't exist!!!";
-		}
+		Octree* ot = octree( item->itemSID(), item->materialSID() );
+		ot->insertItem( newPos.x, newPos.y, newPos.z, item->id() );
+			
 		if ( item->isContainer() )
 		{
 			for ( auto inItemID : item->containedItems() )
@@ -962,11 +892,17 @@ unsigned int Inventory::putDownItem( unsigned int id, const Position& newPos )
 				{
 					QString inItemSID = inItem->itemSID();
 					QString inMatSID  = inItem->materialSID();
-					auto octree       = m_octrees[inItemSID][inMatSID];
-					if ( octree )
+					if( m_octrees.contains( inItemSID ) )
 					{
-						octree->insertItem( newPos.x, newPos.y, newPos.z, inItemID );
-						m_positionHash[newPos.toInt()].insert( inItemID );
+						if( m_octrees[inItemSID].contains( inMatSID ) )
+						{
+							auto octree       = m_octrees[inItemSID][inMatSID];
+							if ( octree )
+							{
+								octree->insertItem( newPos.x, newPos.y, newPos.z, inItemID );
+								m_positionHash[newPos.toInt()].insert( inItemID );
+							}
+						}
 					}
 				}
 			}
@@ -974,31 +910,28 @@ unsigned int Inventory::putDownItem( unsigned int id, const Position& newPos )
 
 		// set new position
 		item->setPos( newPos );
-		GameState::addChange( NetworkCommand::ITEMPUTDOWN, { QString::number( id ), newPos.toString() } );
 
 		unsigned int nextItemID = getFirstObjectAtPosition( newPos );
 		auto nextItem           = getItem( nextItemID );
 		if ( nextItem )
 		{
-			Global::w().setItemSprite( newPos, nextItem->spriteID() );
+			g->m_world->setItemSprite( newPos, nextItem->spriteID() );
 		}
 		else
 		{
-			Global::w().setItemSprite( newPos, 0 );
+			g->m_world->setItemSprite( newPos, 0 );
 		}
 		return id;
 	}
 	return 0;
 }
 
-bool Inventory::isPickedUp( unsigned int id )
+unsigned int Inventory::isHeldBy( unsigned int id )
 {
-	//DB::execQuery( "SELECT pickedUp FROM v_Items WHERE UID = \"" + QString::number( id ) + "\"" );
-
 	Item* item = getItem( id );
 	if ( item )
 	{
-		return item->isPickedUp();
+		return item->isHeldBy();
 	}
 	return false;
 }
@@ -1018,8 +951,6 @@ QList<QString> Inventory::groups( QString category )
 }
 QList<QString> Inventory::items( QString category, QString group )
 {
-	//DB::execQuery2( "SELECT DISTINCT itemSID FROM v_Items WHERE category = \"" + category + "\" AND \"group\" = \"" + group + "\"" );
-
 	if ( m_itemsSorted.contains( category ) )
 	{
 		if ( m_itemsSorted[category].contains( group ) )
@@ -1032,8 +963,6 @@ QList<QString> Inventory::items( QString category, QString group )
 
 QList<QString> Inventory::materials( QString category, QString group, QString item )
 {
-	//DB::execQuery2( "SELECT DISTINCT materialSID FROM v_Items WHERE category = \"" + category + "\" AND \"group\" = \"" + group + "\" AND itemSID = \"" + item + "\"" );
-
 	if ( m_hash.contains( item ) )
 	{
 		return m_hash[item].keys();
@@ -1043,8 +972,6 @@ QList<QString> Inventory::materials( QString category, QString group, QString it
 
 bool Inventory::isInGroup( QString category, QString group, unsigned int itemID )
 {
-	//DB::execQuery( "SELECT count(*) FROM v_Items WHERE UID = \"" + QString::number( itemID ) + "\" AND category = \"" + category + "\" AND \"group\" = \"" + group + "\"" );
-
 	if ( m_itemsSorted.contains( category ) )
 	{
 		if ( m_itemsSorted[category].contains( group ) )
@@ -1063,12 +990,6 @@ bool Inventory::isInGroup( QString category, QString group, unsigned int itemID 
 QMap<QString, int> Inventory::materialCountsForItem( QString itemSID, bool allowInJob )
 {
 	QMap<QString, int> mats;
-	/*
-	auto vMats = DB::execQuery2( "SELECT DISTINCT materialSID FROM v_Items WHERE itemSID = \"" + itemID + "\"" );
-	//for( auto vMat : vMats )
-	{
-		//qDebug() << itemID << vMat.toString() << DB::execQuery( "SELECT count(*) FROM v_Items WHERE itemSID = \"" + itemID + "\" AND materialSID = \"" + vMat.toString() + "\" AND isConstructed = 0 AND pickedUp = 0" ).toInt();
-	}*/
 
 	mats.insert( "any", 0 );
 
@@ -1085,7 +1006,7 @@ QMap<QString, int> Inventory::materialCountsForItem( QString itemSID, bool allow
 			{
 				for ( auto item : it )
 				{
-					if ( ( !item->isInJob() || allowInJob ) && !item->isConstructedOrEquipped() )
+					if ( ( !item->isInJob() || allowInJob ) && !item->isConstructed() && ( item->isHeldBy() == 0 ) )
 					{
 						mats["any"]++;
 						if ( mats.contains( item->materialSID() ) )
@@ -1106,9 +1027,6 @@ QMap<QString, int> Inventory::materialCountsForItem( QString itemSID, bool allow
 
 unsigned int Inventory::itemCount( QString itemID, QString materialID )
 {
-	QMutexLocker lock( &m_mutex );
-	//DB::execQuery( "SELECT count(*) FROM v_Items WHERE itemSID = \"" + itemID + "\" AND materialSID = \"" + materialID + "\"" );
-
 	unsigned int result = 0;
 
 	if ( materialID == "any" )
@@ -1119,7 +1037,7 @@ unsigned int Inventory::itemCount( QString itemID, QString materialID )
 			{
 				for ( auto item : it )
 				{
-					if ( !item->isInJob() && !item->isConstructedOrEquipped() )
+					if ( item->isFree() )
 					{
 						++result;
 					}
@@ -1133,7 +1051,7 @@ unsigned int Inventory::itemCount( QString itemID, QString materialID )
 		{
 			for ( auto item : m_hash[itemID][materialID] )
 			{
-				if ( !item->isConstructedOrEquipped() && !item->isInJob() )
+				if ( item->isFree() )
 				{
 					++result;
 				}
@@ -1146,8 +1064,6 @@ unsigned int Inventory::itemCount( QString itemID, QString materialID )
 
 unsigned int Inventory::itemCountWithInJob( QString itemID, QString materialID )
 {
-	//DB::execQuery( "SELECT count(*) FROM v_Items WHERE itemSID = \"" + itemID + "\" AND materialSID = \"" + materialID + "\"" );
-
 	unsigned int result = 0;
 
 	if ( materialID == "any" )
@@ -1158,7 +1074,7 @@ unsigned int Inventory::itemCountWithInJob( QString itemID, QString materialID )
 			{
 				for ( auto item : it )
 				{
-					if ( !item->isConstructedOrEquipped() )
+					if ( !item->isConstructed() )
 					{
 						++result;
 					}
@@ -1172,7 +1088,7 @@ unsigned int Inventory::itemCountWithInJob( QString itemID, QString materialID )
 		{
 			for ( auto item : m_hash[itemID][materialID] )
 			{
-				if ( !item->isConstructedOrEquipped() )
+				if ( !item->isConstructed() )
 				{
 					++result;
 				}
@@ -1185,8 +1101,6 @@ unsigned int Inventory::itemCountWithInJob( QString itemID, QString materialID )
 
 unsigned int Inventory::itemCountInStockpile( QString itemID, QString materialID )
 {
-	//DB::execQuery( "SELECT count(*) FROM v_Items WHERE itemSID = \"" + itemID + "\" AND materialSID = \"" + materialID + "\" AND inStockpile > 0" );
-
 	unsigned int result = 0;
 
 	if ( materialID == "any" )
@@ -1197,7 +1111,7 @@ unsigned int Inventory::itemCountInStockpile( QString itemID, QString materialID
 			{
 				for ( auto item : it )
 				{
-					if ( item->isInStockpile() && !item->isInJob() && !item->isConstructedOrEquipped() )
+					if ( item->isInStockpile() && item->isFree() )
 					{
 						++result;
 					}
@@ -1211,7 +1125,7 @@ unsigned int Inventory::itemCountInStockpile( QString itemID, QString materialID
 		{
 			for ( auto item : m_hash[itemID][materialID] )
 			{
-				if ( item->isInStockpile() && !item->isConstructedOrEquipped() && !item->isInJob() )
+				if ( item->isInStockpile() && item->isFree() )
 				{
 					result++;
 				}
@@ -1224,8 +1138,6 @@ unsigned int Inventory::itemCountInStockpile( QString itemID, QString materialID
 
 unsigned int Inventory::itemCountNotInStockpile( QString itemID, QString materialID )
 {
-	//DB::execQuery( "SELECT count(*) FROM v_Items WHERE itemSID = \"" + itemID + "\" AND materialSID = \"" + materialID + "\" AND inStockpile = 0" );
-
 	unsigned int result = 0;
 
 	if ( materialID == "any" )
@@ -1236,7 +1148,7 @@ unsigned int Inventory::itemCountNotInStockpile( QString itemID, QString materia
 			{
 				for ( auto item : it )
 				{
-					if ( !item->isInStockpile() && !item->isInJob() && !item->isConstructedOrEquipped() )
+					if ( !item->isInStockpile() && item->isFree() )
 					{
 						++result;
 					}
@@ -1250,7 +1162,7 @@ unsigned int Inventory::itemCountNotInStockpile( QString itemID, QString materia
 		{
 			for ( auto item : m_hash[itemID][materialID] )
 			{
-				if ( item->materialSID() == materialID && !item->isInStockpile() && !item->isConstructedOrEquipped() && !item->isInJob() )
+				if ( item->materialSID() == materialID && !item->isInStockpile() && item->isFree() )
 				{
 					result++;
 				}
@@ -1261,9 +1173,83 @@ unsigned int Inventory::itemCountNotInStockpile( QString itemID, QString materia
 	return result;
 }
 
+Inventory::ItemCountDetailed Inventory::itemCountDetailed( QString itemID, QString materialID )
+{
+	ItemCountDetailed result = { 0, 0, 0, 0, 0, 0, 0 };
+
+	if ( materialID == "any" )
+	{
+		if ( m_hash.contains( itemID ) )
+		{
+			for ( auto it : m_hash[itemID] )
+			{
+				for ( auto item : it )
+				{
+					result.total++;
+
+					if ( item->isHeldBy() != 0 )
+					{
+						//TODO determine if the item is equipped or just carried
+						result.equipped++;
+					}
+
+					if ( item->isConstructed() )
+					{
+						result.constructed++;
+					}
+					else if ( item->isInStockpile() )
+						result.inStockpile++;
+					else
+						result.loose++;
+
+					if ( item->isInJob() )
+						result.inJob++;
+
+					result.totalValue += item->value();
+				}
+			}
+		}
+	}
+	else
+	{
+		if ( m_hash.contains( itemID ) && m_hash[itemID].contains( materialID ) )
+		{
+			for ( auto item : m_hash[itemID][materialID] )
+			{
+				if ( item->materialSID() == materialID )
+				{
+					result.total++;
+
+					if ( item->isHeldBy() != 0 )
+					{
+						//TODO determine if the item is equipped or just carried
+						result.equipped++;
+					}
+					if ( item->isConstructed() )
+					{
+						result.constructed++;
+					}
+					else if ( item->isInStockpile() )
+						result.inStockpile++;
+					else
+						result.loose++;
+
+					if ( item->isInJob() )
+						result.inJob++;
+
+					result.totalValue += item->value();
+				}
+			}
+		}
+	}
+
+	return result;
+
+	return ItemCountDetailed();
+}
+
 bool Inventory::isContainer( unsigned int id )
 {
-	//DB::execQuery( "SELECT isContainer FROM v_Items WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1274,7 +1260,6 @@ bool Inventory::isContainer( unsigned int id )
 
 unsigned int Inventory::isInStockpile( unsigned int id )
 {
-	//DB::execQuery( "SELECT inStockpile FROM v_Items WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1285,7 +1270,6 @@ unsigned int Inventory::isInStockpile( unsigned int id )
 
 void Inventory::setInStockpile( unsigned int id, unsigned int stockpile )
 {
-	//DB::execQuery( "UPDATE v_Items SET inStockpile = \"" + QString::number( stockpile ) + "\" WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1294,13 +1278,11 @@ void Inventory::setInStockpile( unsigned int id, unsigned int stockpile )
 		{
 			addToWealth( item );
 		}
-		GameState::addChange( NetworkCommand::ITEMSETINSTOCKPILE, { QString::number( id ), QString::number( stockpile ) } );
 	}
 }
 
 unsigned int Inventory::isInJob( unsigned int id )
 {
-	//DB::execQuery( "SELECT inJob FROM v_Items WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1311,18 +1293,15 @@ unsigned int Inventory::isInJob( unsigned int id )
 
 void Inventory::setInJob( unsigned int id, unsigned int job )
 {
-	//DB::execQuery( "UPDATE v_Items SET inJob = \"" + QString::number( job ) + "\" WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
 		item->setInJob( job );
-		GameState::addChange( NetworkCommand::ITEMSETINJOB, { QString::number( id ), QString::number( job ) } );
 	}
 }
 
 unsigned int Inventory::isInContainer( unsigned int id )
 {
-	//DB::execQuery( "SELECT inContainer FROM v_Items WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1333,48 +1312,63 @@ unsigned int Inventory::isInContainer( unsigned int id )
 
 void Inventory::setInContainer( unsigned int id, unsigned int container )
 {
-	//DB::execQuery( "UPDATE v_Items SET inContainer = \"" + QString::number( container ) + "\" WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
 		item->setInContainer( container );
-		GameState::addChange( NetworkCommand::ITEMSETINCONTAINER, { QString::number( id ), QString::number( container ) } );
 	}
 }
 
-bool Inventory::isConstructedOrEquipped( unsigned int id )
+bool Inventory::isConstructed( unsigned int id )
 {
-	//DB::execQuery( "SELECT isConstructed FROM v_Items WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
-		return item->isConstructedOrEquipped();
+		return item->isConstructed();
 	}
 	return false;
 }
 
-void Inventory::setConstructedOrEquipped( unsigned int id, bool status )
+void Inventory::setConstructed( unsigned int id, bool status )
 {
-	//DB::execQuery( "UPDATE v_Items SET isConstructed = \"" + QString::number( status ) + "\" WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
-		if ( item->isConstructedOrEquipped() && !status )
+		if ( item->isConstructed() && !status )
 		{
 			removeFromWealth( item );
+			emit signalRemoveItem( itemSID( id ), materialSID( id ) );
 		}
-		item->setIsConstructedOrEquipped( status );
+		item->setIsConstructed( status );
 		if ( status )
 		{
 			addToWealth( item );
+			emit signalAddItem( itemSID( id ), materialSID( id ) );
 		}
-		GameState::addChange( NetworkCommand::ITEMSETCONSTRUCTED, { QString::number( id ), QString::number( status ) } );
+	}
+}
+
+unsigned int Inventory::isUsedBy( unsigned int id )
+{
+	auto item = getItem( id );
+	if ( item )
+	{
+		return item->isUsedBy();
+	}
+	return 0;
+}
+	
+void Inventory::setIsUsedBy( unsigned int id, unsigned int creatureID )
+{
+	auto item = getItem( id );
+	if ( item )
+	{
+		item->setUsedBy( creatureID );
 	}
 }
 
 unsigned int Inventory::value( unsigned int id )
 {
-	//DB::execQuery( "SELECT \"value\" FROM v_Items WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1385,7 +1379,6 @@ unsigned int Inventory::value( unsigned int id )
 
 void Inventory::setValue( unsigned int id, unsigned int value )
 {
-	//DB::execQuery( "UPDATE v_Items SET \"value\" = \"" + QString::number( value ) + "\" WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1395,7 +1388,6 @@ void Inventory::setValue( unsigned int id, unsigned int value )
 
 unsigned char Inventory::quality( unsigned int id )
 {
-	//DB::execQuery( "SELECT quality FROM v_Items WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1406,7 +1398,6 @@ unsigned char Inventory::quality( unsigned int id )
 
 void Inventory::setQuality( unsigned int id, unsigned char quality )
 {
-	//DB::execQuery( "UPDATE v_Items SET quality = \"" + QString::number( quality ) + "\" WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1416,7 +1407,6 @@ void Inventory::setQuality( unsigned int id, unsigned char quality )
 
 unsigned int Inventory::madeBy( unsigned int id )
 {
-	//DB::execQuery( "SELECT madeBy FROM v_Items WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1427,7 +1417,6 @@ unsigned int Inventory::madeBy( unsigned int id )
 
 void Inventory::setMadeBy( unsigned int id, unsigned int creatureID )
 {
-	//DB::execQuery( "UPDATE v_Items SET madeBy = \"" + QString::number( creatureID ) + "\" WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1437,7 +1426,6 @@ void Inventory::setMadeBy( unsigned int id, unsigned int creatureID )
 
 void Inventory::putItemInContainer( unsigned int id, unsigned int containerID )
 {
-	//DB::execQuery( "UPDATE v_Items SET inContainer = \"" + QString::number( containerID ) + "\" WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item      = getItem( id );
 	auto container = getItem( containerID );
 	if ( item != 0 && container != 0 )
@@ -1450,20 +1438,17 @@ void Inventory::putItemInContainer( unsigned int id, unsigned int containerID )
 		auto nextItem           = getItem( nextItemID );
 		if ( nextItem )
 		{
-			Global::w().setItemSprite( container->getPos(), nextItem->spriteID() );
+			g->m_world->setItemSprite( container->getPos(), nextItem->spriteID() );
 		}
 		else
 		{
-			Global::w().setItemSprite( container->getPos(), 0 );
+			g->m_world->setItemSprite( container->getPos(), 0 );
 		}
-
-		GameState::addChange( NetworkCommand::ITEMPUTINCONTAINER, { QString::number( id ), QString::number( containerID ) } );
 	}
 }
 
 void Inventory::removeItemFromContainer( unsigned int id )
 {
-	//DB::execQuery( "UPDATE v_Items SET inContainer = 0 WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1473,12 +1458,11 @@ void Inventory::removeItemFromContainer( unsigned int id )
 		if ( container )
 		{
 			container->removeItem( id );
-			if ( container->isConstructedOrEquipped() )
+			if ( container->isConstructed() )
 			{
-				Global::spm().setInfiNotFull( container->getPos() );
+				g->m_spm->setInfiNotFull( container->getPos() );
 			}
 		}
-		GameState::addChange2( NetworkCommand::ITEMREMOVEFROMCONTAINER, QString::number( id ) );
 	}
 }
 
@@ -1507,7 +1491,6 @@ QString Inventory::designation( unsigned int id )
 
 QString Inventory::itemSID( unsigned int id )
 {
-	//DB::execQuery( "SELECT itemSID FROM v_Items WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1518,7 +1501,6 @@ QString Inventory::itemSID( unsigned int id )
 
 unsigned int Inventory::itemUID( unsigned int id )
 {
-	//DB::execQuery( "SELECT itemUID FROM v_Items WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1529,7 +1511,6 @@ unsigned int Inventory::itemUID( unsigned int id )
 
 QString Inventory::materialSID( unsigned int id )
 {
-	//DB::execQuery( "SELECT materialSID FROM v_Items WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1540,7 +1521,6 @@ QString Inventory::materialSID( unsigned int id )
 
 unsigned int Inventory::materialUID( unsigned int id )
 {
-	//DB::execQuery( "SELECT materialUID FROM v_Items WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1551,7 +1531,6 @@ unsigned int Inventory::materialUID( unsigned int id )
 
 QString Inventory::combinedID( unsigned int id )
 {
-	//return DBH::itemSID( m_itemUID ) + "_" + DBH::materialSID( m_materialUID );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1562,7 +1541,6 @@ QString Inventory::combinedID( unsigned int id )
 
 unsigned int Inventory::spriteID( unsigned int id )
 {
-	//DB::execQuery( "SELECT spriteID FROM v_Items WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1573,7 +1551,6 @@ unsigned int Inventory::spriteID( unsigned int id )
 
 Position Inventory::getItemPos( unsigned int id )
 {
-	//DB::execQuery( "SELECT position FROM v_Items WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1593,7 +1570,6 @@ void Inventory::setItemPos( unsigned int id, const Position& pos )
 
 unsigned char Inventory::stackSize( unsigned int id )
 {
-	//DB::execQuery( "SELECT stacksize FROM v_Items WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1625,7 +1601,6 @@ bool Inventory::requireSame( unsigned int id )
 
 const QSet<unsigned int>& Inventory::itemsInContainer( unsigned int containerID )
 {
-	//DB::execQuery2( "SELECT UID FROM v_items WHERE inContainer = \"" + QString::number( containerID ) + "\"" );
 	auto container = getItem( containerID );
 	if ( container )
 	{
@@ -1637,7 +1612,6 @@ const QSet<unsigned int>& Inventory::itemsInContainer( unsigned int containerID 
 
 unsigned char Inventory::nutritionalValue( unsigned int id )
 {
-	//DB::execQuery( "SELECT eatValue FROM v_Items WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1648,7 +1622,6 @@ unsigned char Inventory::nutritionalValue( unsigned int id )
 
 unsigned char Inventory::drinkValue( unsigned int id )
 {
-	//DB::execQuery( "SELECT drinkValue FROM v_Items WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1689,7 +1662,6 @@ bool Inventory::isTool( unsigned int id )
 
 void Inventory::setColor( unsigned int id, QString color )
 {
-	//DB::execQuery( "UPDATE v_Items SET color = \"" + color + "\" WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1699,7 +1671,6 @@ void Inventory::setColor( unsigned int id, QString color )
 
 unsigned int Inventory::color( unsigned int id )
 {
-	//DB::execQuery( "SELECT color FROM v_Items WHERE UID = \"" + QString::number( id ) + "\"" );
 	auto item = getItem( id );
 	if ( item )
 	{
@@ -1740,13 +1711,16 @@ bool Inventory::isSameTypeAndMaterial( unsigned int id, unsigned int id2 )
 
 void Inventory::gravity( Position pos )
 {
-	if ( !Global::w().isSolidFloor( pos ) )
+	if ( !g->m_world->isSolidFloor( pos ) )
 	{
 		if ( m_positionHash.contains( pos.toInt() ) )
 		{
 			Position newPos = pos;
-			Global::w().getFloorLevelBelow( newPos, false );
-
+			g->m_world->getFloorLevelBelow( newPos, false );
+			if( newPos == pos )
+			{
+				return;
+			}
 			auto items = m_positionHash.value( pos.toInt() );
 			for ( auto item : items )
 			{
@@ -1783,7 +1757,7 @@ bool Inventory::itemTradeAvailable( unsigned int itemUID )
 	auto item = getItem( itemUID );
 	if ( item )
 	{
-		return !item->isConstructedOrEquipped() & (bool)item->isInStockpile() & !(bool)item->isInJob();
+		return (bool)item->isInStockpile() && item->isFree();
 	}
 	return false;
 }
@@ -1876,6 +1850,11 @@ QVariantList Inventory::components( unsigned int itemID )
 	return QVariantList();
 }
 
+int Inventory::numItems()
+{
+	return m_items.size();
+}
+
 int Inventory::kingdomWealth()
 {
 	return m_wealth;
@@ -1911,4 +1890,35 @@ QString Inventory::itemGroup( unsigned int itemID )
 		return DBH::itemGroup( item->itemSID() );
 	}
 	return "";
+}
+
+QList<QString> Inventory::allMats( unsigned int itemID )
+{
+	auto item = getItem( itemID );
+	if ( item )
+	{
+		QStringList out;
+
+		auto comps = item->components();
+		if( comps.size() )
+		{
+			for( const auto& comp : comps )
+			{
+				out.append( DBH::materialSID( comp.materialUID ) );
+			}
+		}
+		else
+		{
+			out.append( item->materialSID() );
+		}
+
+
+		return out;
+	}
+	return QStringList();
+}
+
+ItemHistory* Inventory::itemHistory()
+{
+	return m_itemHistory;
 }

@@ -23,6 +23,8 @@
 #include <QObject>
 #include <QVector>
 
+class Game;
+
 struct TileData
 {
 	unsigned int flags  = 0;
@@ -65,7 +67,8 @@ struct SelectionData
 	bool isFloor            = false;
 	quint8 localRot         = 0;
 };
-Q_DECLARE_TYPEINFO( SelectionData, Q_PRIMITIVE_TYPE );
+//Q_DECLARE_TYPEINFO( SelectionData, Q_PRIMITIVE_TYPE );
+Q_DECLARE_METATYPE( SelectionData );
 
 struct ThoughtBubble
 {
@@ -87,9 +90,9 @@ struct AxleDataInfo
 Q_DECLARE_METATYPE( AxleDataInfo );
 
 constexpr size_t TD_SIZE  = sizeof( TileData ) / sizeof( unsigned int );
-constexpr size_t ROT_BIT  = 65536;
-constexpr size_t ANIM_BIT = 262144;
-constexpr size_t WALL_BIT = 524288;
+constexpr size_t ROT_BIT  = 0x10000;
+constexpr size_t ANIM_BIT = 0x40000;
+constexpr size_t WALL_BIT = 0x80000;
 
 class AggregatorRenderer : public QObject
 {
@@ -98,7 +101,11 @@ class AggregatorRenderer : public QObject
 public:
 	AggregatorRenderer( QObject* parent = nullptr );
 
+	void init( Game* game );
+
 private:
+	QPointer<Game> g;
+
 	QHash<unsigned int, unsigned int> collectCreatures();
 	TileDataUpdate aggregateTile( unsigned int tileID ) const;
 

@@ -20,51 +20,14 @@
 #define GAMESTATE_H_
 
 #include "../base/position.h"
+#include "../gui/aggregatorinventory.h"
 
 #include <QHash>
-#include <QMutex>
 #include <QString>
 #include <QVariant>
 #include <QVariantMap>
 
 #include <initializer_list>
-
-enum class NetworkCommand : unsigned int
-{
-	CREATUREMOVE = 1,
-	CREATESPRITE,
-	CREATESPRITERANDOM,
-	SETFLOORSPRITE,
-	SETWALLSPRITE,
-	CLEARWALLSPRITE,
-	CLEARFLOORSPRITE,
-	SETJOBSPRITE,
-	CLEARJOBSPRITE,
-	SETTILEFLAGS,
-
-	ITEMCREATE,
-	ITEMDESTROY,
-	ITEMMOVE,
-	ITEMPICKUP,
-	ITEMPUTDOWN,
-	ITEMSETINSTOCKPILE,
-	ITEMSETINJOB,
-	ITEMSETINCONTAINER,
-	ITEMSETBEINHAULED,
-	ITEMSETCONSTRUCTED,
-	ITEMSETPOS,
-	ITEMPUTINCONTAINER,
-	ITEMREMOVEFROMCONTAINER,
-
-	PLANTREMOVE,
-
-	WORKSHOPADD,
-	WORKSHOPREMOVE,
-	WORKSHOPINFO,
-
-	SELECTION
-
-};
 
 class GameState
 {
@@ -150,13 +113,17 @@ public:
 	static QVariantList addedMaterials;
 	static QVariantMap addedTranslations;
 
-	// TODO network support, obsolete, when we visit networking again this has to be redone
-	static void setAcceptChangeSets( bool value ) {};
-	static void addChange( NetworkCommand cmd, std::initializer_list<QString> args ) {};
-	static void addChange2( NetworkCommand cmd, QString arg ) {};
-	static QString getChangeSet() { return ""; };
-	
-	
+	static int moveX;
+	static int moveY;
+	static float scale;
+	static int viewLevel;
+
+	static QList<GuiWatchedItem> watchedItemList;
+
+	static QHash<QString, int> materialSID2ID;
+	static QHash<int, QString> materialID2SID;
+	static QHash<QString, int> itemSID2ID;
+	static QHash<int, QString> itemID2SID;
 
 private:
 	static unsigned int nextID;

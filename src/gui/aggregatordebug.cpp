@@ -19,9 +19,10 @@
 
 #include <QDebug>
 
-AggregatorDebug::AggregatorDebug( QObject* parent )
+AggregatorDebug::AggregatorDebug( QObject* parent ) :
+	QObject(parent)
 {
-	connect( this, &AggregatorDebug::signalTriggerEvent, &Global::em(), &EventManager::onDebugEvent );
+	
 }
 
 AggregatorDebug::~AggregatorDebug()
@@ -46,4 +47,10 @@ void AggregatorDebug::onSpawnCreature( QString type )
 		args.insert( "Type", "Goblin" );
 		emit signalTriggerEvent( EventType::INVASION, args );
 	}
+}
+
+
+void AggregatorDebug::onSetWindowSize( int width, int height )
+{
+	emit signalSetWindowSize( width, height );
 }

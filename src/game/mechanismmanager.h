@@ -17,9 +17,12 @@
 */
 #pragma once
 
+
 #include "../base/position.h"
 #include "../base/tile.h"
 #include "../game/job.h"
+
+class Game;
 
 enum MechanismType
 {
@@ -44,6 +47,7 @@ struct MechanismData
 	unsigned char rot = 0;
 
 	QString gui;
+	QString name;
 
 	bool active       = false;
 	bool changeActive = false;
@@ -56,8 +60,6 @@ struct MechanismData
 	int consumePower    = 0;
 	bool hasPower       = false;
 
-	unsigned int jobID = 0;
-
 	bool anim = false;
 
 	bool isInvertable   = false;
@@ -66,8 +68,10 @@ struct MechanismData
 
 	QList<Position> connectsTo;
 
-	QVariantMap serialize();
+	QVariantMap serialize() const;
 	void deserialize( QVariantMap in );
+
+	QWeakPointer<Job> job;
 };
 
 struct MechanismNetwork
@@ -80,15 +84,14 @@ struct MechanismNetwork
 	QSet<unsigned int> consumers;
 };
 
-class MechanismManager
+class MechanismManager : public QObject
 {
-
+	Q_OBJECT
+	Q_DISABLE_COPY_MOVE( MechanismManager )
 public:
-	MechanismManager();
+	MechanismManager() = delete;
+	MechanismManager( Game* parent );
 	~MechanismManager();
-
-	void reset();
-	void init();
 
 	QHash<unsigned int, MechanismData>& mechanisms()
 	{
@@ -97,13 +100,6 @@ public:
 	void loadMechanisms( QVariantList data );
 
 	void onTick( quint64 tickNumber, bool seasonChanged, bool dayChanged, bool hourChanged, bool minuteChanged );
-
-	unsigned int getJob( unsigned int gnomeID, QString skillID );
-
-	bool finishJob( unsigned int jobID );
-	bool giveBackJob( unsigned int jobID );
-	Job* getJob( unsigned int jobID );
-	bool hasJobID( unsigned int jobID );
 
 	bool hasMechanism( Position pos );
 	bool hasGearBox( Position pos );
@@ -138,11 +134,7 @@ public:
 	void updateCreaturesAtPos( Position pos, int numCreatures );
 
 private:
-	QMutex m_mutex;
-
-	Job* getSwitchJob( MechanismData& md );
-	Job* getInvertJob( MechanismData& md );
-	Job* getRefuelJob( MechanismData& md );
+	QPointer<Game> g;
 
 	void installItem( MechanismData md );
 
@@ -154,6 +146,7 @@ private:
 
 	void setActive( unsigned int itemID, bool active );
 	void setInverted( unsigned int itemID, bool inv );
+	void setConnectsTo( MechanismData& md );
 
 	quint64 m_lastTick       = 0;
 	bool m_needNetworkUpdate = false;
@@ -169,6 +162,5 @@ private:
 
 	QHash<unsigned int, MechanismNetwork> m_networks;
 
-	QHash<unsigned int, Job*> m_jobs;
 	QHash<QString, MechanismType> m_string2Type;
 };

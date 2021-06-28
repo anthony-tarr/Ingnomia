@@ -17,29 +17,33 @@
 */
 #pragma once
 
+
+
 #include "../base/priorityqueue.h"
 #include "../game/item.h"
 
 #include <QHash>
 #include <QList>
 #include <QMap>
-#include <QMutex>
 #include <QString>
 
 typedef QSet<unsigned int> PositionEntry;
 typedef QHash<unsigned int, PositionEntry> PositionHash;
 
+class ItemHistory;
 class Octree;
+class StockpileManager;
+class World;
+class Game;
 
 class Inventory : public QObject
 {
 	Q_OBJECT
-
+	Q_DISABLE_COPY_MOVE( Inventory )
 public:
-	Inventory();
+	Inventory() = delete;
+	Inventory( Game* parent );
 	~Inventory();
-
-	void reset();
 
 	void saveFilter();
 	void loadFilter();
@@ -62,6 +66,10 @@ public:
 	unsigned int getItemAtPos( const Position& pos, bool allowInStockpile, QString itemID, QString materialID = "any" );
 
 	QList<unsigned int> getClosestItems( const Position& pos, bool allowInStockpile, QList<QPair<QString, QString>> filter, int count );
+
+	/**
+	* get closest items with connected region check
+	*/
 	QList<unsigned int> getClosestItems( const Position& pos, bool allowInStockpile, QString itemSID, QString materialSID, int count );
 	bool checkReachableItems( Position pos, bool allowInStockpile, int count, QString itemSID, QString materialSID = "any" );
 	QList<unsigned int> getClosestItemsForStockpile( unsigned int stockpileID, Position& pos, bool allowInStockpile, QSet<QPair<QString, QString>> filter );
@@ -74,8 +82,10 @@ public:
 
 	void moveItemToPos( unsigned int item, const Position& newPos );
 
-	unsigned int pickUpItem( unsigned int id );
+	unsigned int pickUpItem( unsigned int id, unsigned int creatureID );
 	unsigned int putDownItem( unsigned int id, const Position& newPos );
+	unsigned int isHeldBy( unsigned int id );
+
 
 	QList<QString> categories();
 	QList<QString> groups( QString category );
@@ -90,6 +100,19 @@ public:
 	unsigned int itemCountInStockpile( QString itemID, QString materialID );
 	unsigned int itemCountNotInStockpile( QString itemID, QString materialID );
 
+	struct ItemCountDetailed
+	{
+		unsigned int total;
+		unsigned int inJob;
+		unsigned int inStockpile;
+		unsigned int equipped;
+		unsigned int constructed;
+		unsigned int loose;
+		unsigned int totalValue;
+	};
+	ItemCountDetailed itemCountDetailed( QString itemID, QString materialID );
+
+
 	bool isContainer( unsigned int item );
 
 	unsigned int isInStockpile( unsigned int id );
@@ -98,11 +121,13 @@ public:
 	void setInJob( unsigned int id, unsigned int job );
 	unsigned int isInContainer( unsigned int id );
 	void setInContainer( unsigned int id, unsigned int container );
+	unsigned int isUsedBy( unsigned int id );
+	void setIsUsedBy( unsigned int id, unsigned int creatureID );
 
-	bool isPickedUp( unsigned int id );
+	
 
-	bool isConstructedOrEquipped( unsigned int id );
-	void setConstructedOrEquipped( unsigned int id, bool status );
+	bool isConstructed( unsigned int id );
+	void setConstructed( unsigned int id, bool status );
 
 	void putItemInContainer( unsigned int id, unsigned int container );
 	void removeItemFromContainer( unsigned int id );
@@ -174,13 +199,24 @@ public:
 	void removeFromWealth( Item* item );
 
 	int kingdomWealth();
+	int numItems();
 
 	bool itemsChanged();
 	void setItemsChanged();
 
 	QString itemGroup( unsigned int itemID );
 
+	QList<QString> allMats( unsigned int itemID );
+
+	ItemHistory* itemHistory();
+
 private:
+	QPointer<Game> g;
+
+	QPointer<ItemHistory> m_itemHistory;
+
+	Octree* octree( const QString& itemSID, const QString& materialSID );
+
 	int m_dimX;
 	int m_dimY;
 	int m_dimZ;
@@ -190,8 +226,6 @@ private:
 	PositionHash m_positionHash;
 	QHash<QString, QHash<QString, QHash<unsigned int, Item*>>> m_hash;
 	QHash<QString, QHash<QString, Octree*>> m_octrees;
-
-	QMutex m_mutex;
 
 	QList<QString> m_categoriesSorted;
 	QMap<QString, QList<QString>> m_groupsSorted;
@@ -213,4 +247,8 @@ private:
 	int m_wealth = 0;
 
 	bool m_itemsChanged = false; //flag is used for updating the stock overview
+
+signals:
+	void signalAddItem( QString itemSID, QString materialSID );
+	void signalRemoveItem( QString itemSID, QString materialSID );
 };

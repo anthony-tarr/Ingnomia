@@ -19,6 +19,7 @@
 
 #include "../base/position.h"
 #include "../game/worldobject.h"
+#include "../game/job.h"
 
 #include <QHash>
 #include <QList>
@@ -27,12 +28,12 @@
 #include <QVariantMap>
 
 class Job;
+class Game;
 
 struct GroveField
 {
 	Position pos;
-	bool hasJob    = false;
-	bool harvested = false;
+	QWeakPointer<Job> job;
 };
 
 enum GroveJobs : int
@@ -59,7 +60,7 @@ struct GroveProperties
 	unsigned int autoFellMin = 0;
 	unsigned int autoFellMax = 0;
 
-	void serialize( QVariantMap& out );
+	void serialize( QVariantMap& out ) const;
 	GroveProperties() {};
 	GroveProperties( QVariantMap& in );
 };
@@ -67,27 +68,25 @@ struct GroveProperties
 class Grove : public WorldObject
 {
 	friend class AggregatorAgri;
-
+	Q_DISABLE_COPY_MOVE( Grove )
 public:
-	Grove();
-	Grove( QList<QPair<Position, bool>> tiles );
-	Grove( QVariantMap vals );
+	Grove() = delete;
+	Grove( QList<QPair<Position, bool>> tiles, Game* game );
+	Grove( QVariantMap vals, Game* game );
 	~Grove();
 
-	QVariant serialize();
+	QVariant serialize() const;
 
 	void onTick( quint64 tick );
 
-	unsigned int getJob( unsigned int gnomeID, QString skillID );
-	bool finishJob( unsigned int job );
-	bool giveBackJob( unsigned int job );
-	Job* getJob( unsigned int jobID );
-	bool hasJobID( unsigned int jobID );
+	bool canDelete() const;
 
-	bool removeTile( Position& pos );
-	void addTile( Position& pos );
+	bool removeTile( const Position & pos );
+	void addTile( const Position & pos );
 
-	bool hasPlantTreeJob( Position pos );
+	int numTrees();
+
+	int numPlots() { return m_fields.size(); }
 
 private:
 	GroveProperties m_properties;
@@ -95,12 +94,6 @@ private:
 	QMap<unsigned int, GroveField*> m_fields;
 
 	void updateAutoForester();
-
-	Job* getPlantJob();
-	Job* getPickJob();
-	Job* getFellJob();
-
-	QMap<unsigned int, Job*> m_jobsOut;
 
 	QMap<int, int> m_prioValues;
 

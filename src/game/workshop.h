@@ -19,6 +19,7 @@
 
 #include "../base/position.h"
 #include "../game/worldobject.h"
+#include "../game/job.h"
 
 #include <QMap>
 #include <QVariantMap>
@@ -37,14 +38,14 @@ struct InputItem
 {
 	QString itemSID;
 	QString materialSID;
-	int amount;
-	bool requireSame;
+	int amount = 0;
+	bool requireSame = false;
+	int avail = 0;
 };
 
 struct CraftJob
 {
 	unsigned int id    = 0; // unique id for this craft job
-	unsigned int jobID = 0; // if the job is
 
 	QString craftID;       // craft definition in DB table Crafts
 	QString itemSID;       // the item to craft
@@ -81,15 +82,11 @@ struct WorkshopProperties
 	Position posIn;
 	Position posOut;
 
-	QString gui;
-
 	unsigned int owner           = 0;
 	unsigned int linkedStockpile = 0;
 
 	bool toDestroy = false;
 	bool canDelete = false;
-
-	bool noAutoGenerate = false;
 
 	bool butcherExcess  = false;
 	bool butcherCorpses = true;
@@ -104,6 +101,11 @@ struct WorkshopProperties
 	QVariantList sourceItems;
 	QVariantList itemsToSell;
 
+	// not saved in game, always loaded from DB
+	QString gui;
+	bool noAutoGenerate = false;
+	QStringList crafts;
+
 	void serialize( QVariantMap& out );
 	WorkshopProperties() {};
 	WorkshopProperties( QVariantMap& in );
@@ -113,15 +115,14 @@ struct WorkshopProperties
 class Workshop : public WorldObject
 {
 	friend class WorkshopManager;
-
+	Q_DISABLE_COPY_MOVE( Workshop )
 public:
-	Workshop();
-	Workshop( QVariantMap values );
+	Workshop() = delete;
+	Workshop( QString type, Position& pos, int rotation, Game* game );
+	Workshop( QVariantMap values, Game* game );
 	~Workshop();
 
 	QVariant serialize();
-
-	void init( QString type, Position& pos, int rotation );
 
 	void onTick( quint64 tick );
 
@@ -148,14 +149,15 @@ public:
 	bool moveJob( unsigned int jobDefID, QString moveCmd );
 	void moveJob( int pos, int newPos );
 	bool autoCraft( QString itemSID, QString materialSID, int amount );
+	bool canCraft( QString itemSID, QString materialSID );
 
 	bool setJobParams( unsigned int craftJobID, int mode, int numToCraft, bool suspended, bool moveBack );
 
-	Job* createJobFromCraftJob( CraftJob& cj );
-	Job* createButcherJob();
-	Job* createDyeSheepJob();
-	Job* createFisherJob();
-	Job* createFishButcherJob();
+	bool createJobFromCraftJob( CraftJob& cj );
+	QSharedPointer<Job> createButcherJob();
+	QSharedPointer<Job> createDyeSheepJob();
+	QSharedPointer<Job> createFisherJob();
+	QSharedPointer<Job> createFishButcherJob();
 
 	void setLinkedStockpile( bool link );
 	unsigned int linkedStockpile();
@@ -237,6 +239,11 @@ public:
 		return m_properties.gui;
 	}
 
+	const QStringList& crafts()
+	{
+		return m_properties.crafts;
+	}
+
 	void setAcceptGenerated( bool accept );
 	bool isAcceptingGenerated();
 
@@ -261,25 +268,29 @@ public:
 
 	void cancelJob( unsigned int jobDefID );
 
+	bool hasCraftJob( const QString& itemSID, const QString& materialSID );
+
+	int numJobs() { return m_jobList.size(); }
+
 private:
 	//only access through workshop manager
-	bool finishJob( unsigned int jobID );
-	unsigned int getJob( unsigned int gnomeID, QString skillID );
-	bool giveBackJob( unsigned int jobID );
-	Job* getJob( unsigned int jobID );
-	bool hasJobID( unsigned int jobID );
+	bool finishJob( unsigned int craftJobID );
 
 	WorkshopProperties m_properties;
 
 	QMap<unsigned int, Position> m_tiles;
 	QList<CraftJob> m_jobList;
+	QList<CraftJob> m_autoCraftList;
 
-	Job* m_job        = nullptr;
-	Job* m_fishingJob = nullptr;
+	QWeakPointer<Job> m_job;
+	unsigned int m_currentCraftJobID = 0;
+	unsigned int m_currentJobID = 0; // only needed to retrieve the job pointer after load
+	
+	QWeakPointer<Job> m_fishingJob;
 
 	QVariantList m_spriteComposition;
 
-	bool checkItemsAvailable( Job* job );
+	bool checkItemsAvailable( CraftJob& cj );
 
 	QList<QPair<unsigned int, QString>> m_toDye;
 };

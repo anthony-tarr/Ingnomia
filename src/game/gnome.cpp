@@ -16,6 +16,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "gnome.h"
+#include "../game/gnomemanager.h"
+#include "../game/game.h"
 
 #include "../base/behaviortree/bt_tree.h"
 #include "../base/config.h"
@@ -23,12 +25,13 @@
 #include "../base/gamestate.h"
 #include "../base/global.h"
 #include "../base/util.h"
-#include "../game/gnomemanager.h"
 #include "../game/inventory.h"
 #include "../game/militarymanager.h"
 #include "../game/plant.h"
 #include "../game/stockpilemanager.h"
 #include "../game/world.h"
+#include "../game/workshop.h"
+#include "../game/workshopmanager.h"
 #include "../gfx/spritefactory.h"
 #include "../gui/strings.h"
 
@@ -39,8 +42,8 @@
 #include <QPainter>
 #include <QThreadPool>
 
-Gnome::Gnome( Position& pos, QString name, Gender gender ) :
-	CanWork( pos, name, gender, "Gnome" )
+Gnome::Gnome( Position& pos, QString name, Gender gender, Game* game ) :
+	CanWork( pos, name, gender, "Gnome", game )
 {
 	m_ignoreNoPass = false;
 
@@ -62,7 +65,7 @@ Gnome::Gnome( Position& pos, QString name, Gender gender ) :
 
 	m_type = CreatureType::GNOME;
 
-	m_anatomy.init( "Humanoid" );
+	m_anatomy.init( "Humanoid", false );
 
 	for ( int i = 0; i < 24; ++i )
 	{
@@ -72,8 +75,8 @@ Gnome::Gnome( Position& pos, QString name, Gender gender ) :
 	log( GameState::currentYearAndSeason );
 }
 
-Gnome::Gnome( QVariantMap& in ) :
-	CanWork( in )
+Gnome::Gnome( QVariantMap& in, Game* game ) :
+	CanWork( in, game )
 {
 	m_skillActive     = in.value( "SkillActive" ).toMap();
 	m_skillPriorities = in.value( "SkillPriorities" ).toStringList();
@@ -121,15 +124,15 @@ Gnome::Gnome( QVariantMap& in ) :
 	// TODO update carried counts from inventory
 	for ( auto item : m_inventoryItems )
 	{
-		if ( Global::inv().itemSID( item ) == "Bandage" )
+		if ( g->inv()->itemSID( item ) == "Bandage" )
 		{
 			++m_carriedBandages;
 		}
-		else if ( Global::inv().nutritionalValue( item ) > 0 )
+		else if ( g->inv()->nutritionalValue( item ) > 0 )
 		{
 			++m_carriedFood;
 		}
-		else if ( Global::inv().drinkValue( item ) > 0 )
+		else if ( g->inv()->drinkValue( item ) > 0 )
 		{
 			++m_carriedDrinks;
 		}
@@ -161,7 +164,7 @@ void Gnome::serialize( QVariantMap& out )
 	
 
 	QVariantList vSchedule;
-	for( auto sa : m_schedule )
+	for( const auto& sa : m_schedule )
 	{
 		switch ( sa )
 		{
@@ -191,7 +194,7 @@ Gnome::~Gnome()
 
 void Gnome::init()
 {
-	Global::w().insertCreatureAtPosition( m_position, m_id );
+	g->w()->insertCreatureAtPosition( m_position, m_id );
 
 	updateSprite();
 	initTaskMap();
@@ -238,8 +241,8 @@ void Gnome::updateSprite()
 	m_spriteDef     = createSpriteDef( "Gnome", false );
 	m_spriteDefBack = createSpriteDef( "GnomeBack", true );
 
-	Global::sf().setCreatureSprite( m_id, m_spriteDef, m_spriteDefBack, m_isDead );
-
+	g->sf()->setCreatureSprite( m_id, m_spriteDef, m_spriteDefBack, isDead() );
+	m_equipmentChanged = true;
 	m_renderParamsChanged = true;
 }
 
@@ -256,7 +259,7 @@ QVariantList Gnome::createSpriteDef( QString type, bool isBack )
 	Uniform* uniform = nullptr;
 	if ( m_roleID )
 	{
-		uniform = Global::mil().uniform( m_roleID );
+		uniform = g->mil()->uniform( m_roleID );
 	}
 
 	QVariantList def;
@@ -278,235 +281,151 @@ QVariantList Gnome::createSpriteDef( QString type, bool isBack )
 
 		unsigned int item = 0;
 
-		if ( uniform )
+		switch ( part )
 		{
-			switch ( part )
-			{
-				case CP_HEAD:
-					break;
-				case CP_TORSO:
-					break;
-				case CP_LEFT_ARM:
-					break;
-				case CP_RIGHT_ARM:
-					break;
-				case CP_LEFT_HAND:
-					break;
-				case CP_RIGHT_HAND:
-					break;
-				case CP_LEFT_LEG:
-					break;
-				case CP_RIGHT_LEG:
-					break;
-				case CP_LEFT_FOOT:
-					break;
-				case CP_RIGHT_FOOT:
-					break;
+			case CP_HEAD:
+				break;
+			case CP_TORSO:
+				break;
+			case CP_LEFT_ARM:
+				break;
+			case CP_RIGHT_ARM:
+				break;
+			case CP_LEFT_HAND:
+				break;
+			case CP_RIGHT_HAND:
+				break;
+			case CP_LEFT_LEG:
+				break;
+			case CP_RIGHT_LEG:
+				break;
+			case CP_LEFT_FOOT:
+				break;
+			case CP_RIGHT_FOOT:
+				break;
 
-				case CP_HAIR:
-					pm.insert( "Tint", m_equipment.hairColor );
-					bs = m_equipment.hair;
-					pm.insert( "IsHair", true );
-					pm.insert( "Hidden", hairConcealed );
-					break;
-				case CP_FACIAL_HAIR:
-					pm.insert( "Tint", m_equipment.hairColor );
-					bs = m_equipment.facialHair;
-					break;
-				case CP_CLOTHING:
-					pm.insert( "Tint", m_equipment.shirtColor );
-					bs = m_equipment.shirt;
-					break;
-				case CP_BOOTS:
-					break;
-				case CP_HAT:
-					break;
+			case CP_HAIR:
+				pm.insert( "Tint", m_equipment.hairColor );
+				bs = m_equipment.hair;
+				pm.insert( "IsHair", true );
+				pm.insert( "Hidden", hairConcealed );
+				break;
+			case CP_FACIAL_HAIR:
+				pm.insert( "Tint", m_equipment.hairColor );
+				bs = m_equipment.facialHair;
+				break;
+			case CP_CLOTHING:
+				pm.insert( "Tint", m_equipment.shirtColor );
+				bs = m_equipment.shirt;
+				break;
+			case CP_BOOTS:
+				break;
+			case CP_HAT:
+				break;
 
-				case CP_ARMOR_HEAD:
-					if ( m_equipment.head.itemID )
-					{
-						bs = "Gnome";
-						bs += Global::inv().itemGroup( m_equipment.head.itemID );
-						bs += "HeadArmor";
-						hairConcealed = true;
-						pm.insert( "Material", m_equipment.head.material );
-					}
-					break;
-				case CP_ARMOR_TORSO:
-					if ( m_equipment.chest.itemID )
-					{
-						bs = "Gnome";
-						bs += Global::inv().itemGroup( m_equipment.chest.itemID );
-						bs += "ChestArmor";
-						pm.insert( "Material", m_equipment.chest.material );
-					}
-					break;
-				case CP_ARMOR_LEFT_ARM:
-					if ( m_equipment.arm.itemID )
-					{
-						bs = "Gnome";
-						bs += Global::inv().itemGroup( m_equipment.arm.itemID );
-						bs += "LeftArmArmor";
-						pm.insert( "Material", m_equipment.arm.material );
-					}
-					break;
-				case CP_ARMOR_RIGHT_ARM:
-					if ( m_equipment.arm.itemID )
-					{
-						bs = "Gnome";
-						bs += Global::inv().itemGroup( m_equipment.arm.itemID );
-						bs += "RightArmArmor";
-						pm.insert( "Material", m_equipment.arm.material );
-					}
-					break;
-				case CP_ARMOR_LEFT_HAND:
-					if ( m_equipment.hand.itemID )
-					{
-						bs = "Gnome";
-						bs += Global::inv().itemGroup( m_equipment.hand.itemID );
-						bs += "LeftHandArmor";
-						pm.insert( "Material", m_equipment.hand.material );
-					}
-					break;
-				case CP_ARMOR_RIGHT_HAND:
-					if ( m_equipment.hand.itemID )
-					{
-						bs = "Gnome";
-						bs += Global::inv().itemGroup( m_equipment.hand.itemID );
-						bs += "RightHandArmor";
-						pm.insert( "Material", m_equipment.hand.material );
-					}
-					break;
-				case CP_ARMOR_LEFT_FOOT:
-					if ( m_equipment.foot.itemID )
-					{
-						bs = "Gnome";
-						bs += Global::inv().itemGroup( m_equipment.foot.itemID );
-						bs += "LeftFootArmor";
-						pm.insert( "Material", m_equipment.foot.material );
-					}
-					break;
-				case CP_ARMOR_RIGHT_FOOT:
-					if ( m_equipment.foot.itemID )
-					{
-						bs = "Gnome";
-						bs += Global::inv().itemGroup( m_equipment.foot.itemID );
-						bs += "RightFootArmor";
-						pm.insert( "Material", m_equipment.foot.material );
-					}
-					break;
-				case CP_LEFT_HAND_HELD:
-					if ( m_equipment.leftHandHeld.itemID )
-					{
-						bs = "Gnome";
-						bs += m_equipment.leftHandHeld.item;
-						bs += "Left";
-						pm.insert( "Material", m_equipment.leftHandHeld.material );
-						pm.insert( "HasBase", true );
-					}
-					break;
-				case CP_RIGHT_HAND_HELD:
-					if ( m_equipment.rightHandHeld.itemID )
-					{
-						bs = "Gnome";
-						bs += m_equipment.rightHandHeld.item;
-						bs += "Right";
-						pm.insert( "Material", m_equipment.leftHandHeld.material );
-						pm.insert( "HasBase", true );
-					}
-					break;
-				case CP_BACK:
-					if ( isBack && m_equipment.back.itemID )
-					{
-						bs = "Gnome";
-						bs += m_equipment.back.item;
-						pm.insert( "Material", m_equipment.leftHandHeld.material );
-					}
-					break;
-			}
+			case CP_ARMOR_HEAD:
+				if ( m_equipment.head.itemID )
+				{
+					bs = "Gnome";
+					bs += g->inv()->itemGroup( m_equipment.head.itemID );
+					bs += "HeadArmor";
+					hairConcealed = true;
+					pm.insert( "Material", m_equipment.head.material );
+				}
+				break;
+			case CP_ARMOR_TORSO:
+				if ( m_equipment.chest.itemID )
+				{
+					bs = "Gnome";
+					bs += g->inv()->itemGroup( m_equipment.chest.itemID );
+					bs += "ChestArmor";
+					pm.insert( "Material", m_equipment.chest.material );
+				}
+				break;
+			case CP_ARMOR_LEFT_ARM:
+				if ( m_equipment.arm.itemID )
+				{
+					bs = "Gnome";
+					bs += g->inv()->itemGroup( m_equipment.arm.itemID );
+					bs += "LeftArmArmor";
+					pm.insert( "Material", m_equipment.arm.material );
+				}
+				break;
+			case CP_ARMOR_RIGHT_ARM:
+				if ( m_equipment.arm.itemID )
+				{
+					bs = "Gnome";
+					bs += g->inv()->itemGroup( m_equipment.arm.itemID );
+					bs += "RightArmArmor";
+					pm.insert( "Material", m_equipment.arm.material );
+				}
+				break;
+			case CP_ARMOR_LEFT_HAND:
+				if ( m_equipment.hand.itemID )
+				{
+					bs = "Gnome";
+					bs += g->inv()->itemGroup( m_equipment.hand.itemID );
+					bs += "LeftHandArmor";
+					pm.insert( "Material", m_equipment.hand.material );
+				}
+				break;
+			case CP_ARMOR_RIGHT_HAND:
+				if ( m_equipment.hand.itemID )
+				{
+					bs = "Gnome";
+					bs += g->inv()->itemGroup( m_equipment.hand.itemID );
+					bs += "RightHandArmor";
+					pm.insert( "Material", m_equipment.hand.material );
+				}
+				break;
+			case CP_ARMOR_LEFT_FOOT:
+				if ( m_equipment.foot.itemID )
+				{
+					bs = "Gnome";
+					bs += g->inv()->itemGroup( m_equipment.foot.itemID );
+					bs += "LeftFootArmor";
+					pm.insert( "Material", m_equipment.foot.material );
+				}
+				break;
+			case CP_ARMOR_RIGHT_FOOT:
+				if ( m_equipment.foot.itemID )
+				{
+					bs = "Gnome";
+					bs += g->inv()->itemGroup( m_equipment.foot.itemID );
+					bs += "RightFootArmor";
+					pm.insert( "Material", m_equipment.foot.material );
+				}
+				break;
+			case CP_LEFT_HAND_HELD:
+				if ( m_equipment.leftHandHeld.itemID )
+				{
+					bs = "Gnome";
+					bs += m_equipment.leftHandHeld.item;
+					bs += "Left";
+					pm.insert( "Material", m_equipment.leftHandHeld.material );
+					pm.insert( "HasBase", true );
+				}
+				break;
+			case CP_RIGHT_HAND_HELD:
+				if ( m_equipment.rightHandHeld.itemID )
+				{
+					bs = "Gnome";
+					bs += m_equipment.rightHandHeld.item;
+					bs += "Right";
+					pm.insert( "Material", m_equipment.leftHandHeld.material );
+					pm.insert( "HasBase", true );
+				}
+				break;
+			case CP_BACK:
+				if ( isBack && m_equipment.back.itemID )
+				{
+					bs = "Gnome";
+					bs += m_equipment.back.item;
+					pm.insert( "Material", m_equipment.leftHandHeld.material );
+				}
+				break;
 		}
-		else
-		{
-			switch ( part )
-			{
-				case CP_HEAD:
-					break;
-				case CP_TORSO:
-					break;
-				case CP_LEFT_ARM:
-					break;
-				case CP_RIGHT_ARM:
-					break;
-				case CP_LEFT_HAND:
-					break;
-				case CP_RIGHT_HAND:
-					break;
-				case CP_LEFT_LEG:
-					break;
-				case CP_RIGHT_LEG:
-					break;
-				case CP_LEFT_FOOT:
-					break;
-				case CP_RIGHT_FOOT:
-					break;
-				case CP_BACK:
-					break;
-				case CP_HAIR:
-					pm.insert( "Tint", m_equipment.hairColor );
-					bs = m_equipment.hair;
-					pm.insert( "IsHair", true );
-					break;
-				case CP_FACIAL_HAIR:
-					pm.insert( "Tint", m_equipment.hairColor );
-					bs = m_equipment.facialHair;
-					break;
-				case CP_CLOTHING:
-					pm.insert( "Tint", m_equipment.shirtColor );
-					bs = m_equipment.shirt;
-					break;
-				case CP_BOOTS:
-					break;
-				case CP_HAT:
-					break;
-
-				case CP_ARMOR_HEAD:
-					break;
-				case CP_ARMOR_TORSO:
-					break;
-				case CP_ARMOR_LEFT_ARM:
-					break;
-				case CP_ARMOR_RIGHT_ARM:
-					break;
-				case CP_ARMOR_LEFT_HAND:
-					break;
-				case CP_ARMOR_RIGHT_HAND:
-					break;
-				case CP_ARMOR_LEFT_FOOT:
-					break;
-				case CP_ARMOR_RIGHT_FOOT:
-					break;
-				case CP_LEFT_HAND_HELD:
-					if ( m_equipment.leftHandHeld.itemID )
-					{
-						bs = "Gnome";
-						bs += m_equipment.leftHandHeld.item;
-						bs += "Left";
-						pm.insert( "Material", m_equipment.leftHandHeld.material );
-						pm.insert( "HasBase", true );
-					}
-					break;
-				case CP_RIGHT_HAND_HELD:
-					if ( m_equipment.rightHandHeld.itemID )
-					{
-						bs = "Gnome";
-						bs += m_equipment.rightHandHeld.item;
-						bs += "Right";
-						pm.insert( "Material", m_equipment.leftHandHeld.material );
-						pm.insert( "HasBase", true );
-					}
-					break;
-			}
-		}
+		
 
 		if ( isBack && !bs.endsWith( "Back" ) )
 		{
@@ -679,7 +598,7 @@ void Gnome::selectProfession( QString profession )
 
 		clearAllSkills();
 
-		m_skillPriorities = Global::gm().professionSkills( profession );
+		m_skillPriorities = g->gm()->professionSkills( profession );
 
 		for ( auto skill : m_skillPriorities )
 		{
@@ -706,24 +625,22 @@ CreatureTickResult Gnome::onTick( quint64 tickNumber, bool seasonChanged, bool d
 		m_lastOnTick = tickNumber;
 		return CreatureTickResult::NOFLOOR;
 	}
-	m_anatomy.setFluidLevelonTile( Global::w().fluidLevel( m_position ) );
+	m_anatomy.setFluidLevelonTile( g->w()->fluidLevel( m_position ) );
 	if ( m_anatomy.statusChanged() )
 	{
 		auto status = m_anatomy.status();
 		if ( status & AS_DEAD )
 		{
 			Global::logger().log( LogType::COMBAT, m_name + "died. Bummer!", m_id );
-			m_isDead = true;
+			die();
 			// TODO check for other statuses
 		}
 	}
 
-	if ( m_isDead )
+	if ( isDead() )
 	{
-		qDebug() << m_name << " expires " << GameState::tick + Util::ticksPerDay;
-		cleanUpJob( false );
-		updateSprite();
-		m_expires    = GameState::tick + Util::ticksPerDay * 2;
+		qDebug() << m_name << " expires " << GameState::tick + Global::util->ticksPerDay;
+		m_expires    = GameState::tick + Global::util->ticksPerDay * 2;
 		m_lastOnTick = tickNumber;
 		return CreatureTickResult::DEAD;
 	}
@@ -742,10 +659,10 @@ CreatureTickResult Gnome::onTick( quint64 tickNumber, bool seasonChanged, bool d
 			if ( m_inventoryItems.size() > 0 )
 			{
 				auto item = m_inventoryItems.takeFirst();
-				if ( Global::inv().itemSID( item ) == "Bandage" )
+				if ( g->inv()->itemSID( item ) == "Bandage" )
 				{
-					Global::inv().setInJob( item, 0 );
-					Global::inv().putDownItem( item, m_position );
+					g->inv()->setInJob( item, 0 );
+					g->inv()->putDownItem( item, m_position );
 					--m_carriedBandages;
 				}
 				else
@@ -768,10 +685,10 @@ CreatureTickResult Gnome::onTick( quint64 tickNumber, bool seasonChanged, bool d
 			if ( m_inventoryItems.size() > 0 )
 			{
 				auto item = m_inventoryItems.takeFirst();
-				if ( Global::inv().nutritionalValue( item ) > 0 )
+				if ( g->inv()->nutritionalValue( item ) > 0 )
 				{
-					Global::inv().setInJob( item, 0 );
-					Global::inv().putDownItem( item, m_position );
+					g->inv()->setInJob( item, 0 );
+					g->inv()->putDownItem( item, m_position );
 					--m_carriedFood;
 				}
 				else
@@ -794,10 +711,10 @@ CreatureTickResult Gnome::onTick( quint64 tickNumber, bool seasonChanged, bool d
 			if ( m_inventoryItems.size() > 0 )
 			{
 				auto item = m_inventoryItems.takeFirst();
-				if ( Global::inv().drinkValue( item ) > 0 )
+				if ( g->inv()->drinkValue( item ) > 0 )
 				{
-					Global::inv().setInJob( item, 0 );
-					Global::inv().putDownItem( item, m_position );
+					g->inv()->setInJob( item, 0 );
+					g->inv()->putDownItem( item, m_position );
 					--m_carriedDrinks;
 				}
 				else
@@ -825,7 +742,7 @@ CreatureTickResult Gnome::onTick( quint64 tickNumber, bool seasonChanged, bool d
 	if ( elapsed > 100 )
 	{
 		qDebug() << m_name << "just needed" << elapsed << "ms for bt tick";
-		Config::getInstance().set( "Pause", true );
+		Global::cfg->set( "Pause", true );
 	}
 #else
 	if ( m_behaviorTree )
@@ -866,9 +783,22 @@ CreatureTickResult Gnome::onTick( quint64 tickNumber, bool seasonChanged, bool d
 	return CreatureTickResult::OK;
 }
 
+void Gnome::die()
+{
+	Creature::die();
+	cleanUpJob( false );
+	for ( Workshop* w : g->wsm()->workshops() )
+	{
+		if ( w->assignedGnome() == id() )
+		{
+			w->assignGnome( 0 );
+		}
+	}
+}
+
 bool Gnome::checkFloor()
 {
-	FloorType ft = Global::w().floorType( m_position );
+	FloorType ft = g->w()->floorType( m_position );
 	if ( ft == FloorType::FT_NOFLOOR )
 	{
 		if ( m_job )
@@ -878,7 +808,7 @@ bool Gnome::checkFloor()
 
 		Position oneDown( m_position.x, m_position.y, m_position.z - 1 );
 		forceMove( oneDown );
-		Global::w().discover( oneDown );
+		g->w()->discover( oneDown );
 		return true;
 	}
 	return false;
@@ -921,9 +851,7 @@ bool Gnome::evalNeeds( bool seasonChanged, bool dayChanged, bool hourChanged, bo
 				if ( newVal < -100 )
 				{
 					m_thoughtBubble = "";
-					cleanUpJob( false );
-					m_isDead = true;
-					updateSprite();
+					die();
 					if ( need == "Hunger" )
 					{
 						log( "Starved to death." );

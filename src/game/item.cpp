@@ -44,7 +44,7 @@ Item::Item( Position& pos, QString itemSID, QString materialSID ) :
 		setNutritionalValue( DB::select( "EatValue", "Items", itemSID ).toInt() );
 		setDrinkValue( DB::select( "DrinkValue", "Items", itemSID ).toInt() );
 	}
-	if ( DB::select( "IsContainer", "Items", m_itemUID ).toBool() )
+	if ( DB::select( "IsContainer", "Items", itemSID ).toBool() )
 	{
 		if ( !m_extraData )
 		{
@@ -63,13 +63,30 @@ Item::Item( QVariantMap in ) :
 	m_position = Position( in.value( "Position" ).toString() );
 	m_spriteID = in.value( "SpriteID" ).toUInt();
 	*/
-	m_itemUID       = DBH::itemUID( in.value( "ItemSID" ).toString() );
+	QString itemSID = in.value( "ItemSID" ).toString();
+	m_itemUID       = DBH::itemUID( itemSID );
 	m_materialUID   = DBH::materialUID( in.value( "MaterialSID" ).toString() );
 	m_isInStockpile = in.value( "InStockpile" ).toUInt();
 	m_isInJob       = in.value( "InJob" ).toUInt();
+	m_isUsedBy      = in.value( "IsUsedBy" ).toUInt();
 	m_isInContainer = in.value( "InContainer" ).toUInt();
-	m_isConstructedOrEquipped = in.value( "Constructed" ).toBool();
-	m_isPickedUp    = in.value( "IsPickedUp" ).toBool();
+	m_isConstructed = in.value( "Constructed" ).toBool();
+	if( in.contains( "IsHeldBy") )
+	{
+		m_isHeldBy = in.value( "IsHeldBy" ).toUInt();
+	}
+	else
+	{
+		if( in.contains( "IsPickedUp" ) )
+		{
+			// legacy save game, need to determine who is holding the item
+			if( in.value( "IsPickedUp" ).toBool() )
+			{
+				m_isHeldBy = 1;
+			}
+		}
+	}
+	
 	m_value         = in.value( "Value" ).toUInt();
 	m_madeBy        = in.value( "MadeBy" ).toUInt();
 	m_quality       = in.value( "Quality" ).toUInt();
@@ -113,8 +130,8 @@ Item::Item( QVariantMap in ) :
 		{
 			m_extraData = new ItemExtraData;
 		}
-		m_extraData->capacity    = DB::select( "Capacity", "Containers", m_itemUID ).value<unsigned char>();
-		m_extraData->requireSame = DB::select( "RequireSame", "Containers", m_itemUID ).toBool();
+		m_extraData->capacity    = DB::select( "Capacity", "Containers", itemSID ).value<unsigned char>();
+		m_extraData->requireSame = DB::select( "RequireSame", "Containers", itemSID ).toBool();
 	}
 }
 
@@ -124,8 +141,8 @@ Item::Item( const Item& other ) :
 	m_isInStockpile( other.m_isInStockpile ),
 	m_isInJob( other.m_isInJob ),
 	m_isInContainer( other.m_isInContainer ),
-	m_isConstructedOrEquipped( other.m_isConstructedOrEquipped ),
-	m_isPickedUp( other.m_isPickedUp ),
+	m_isConstructed( other.m_isConstructed ),
+	m_isHeldBy( other.m_isHeldBy ),
 	m_value( other.m_value ),
 	m_madeBy( other.m_madeBy ),
 	m_quality( other.m_quality ),
@@ -169,8 +186,9 @@ QVariant Item::serialize() const
 	out.insert( "InStockpile", m_isInStockpile );
 	out.insert( "InJob", m_isInJob );
 	out.insert( "InContainer", m_isInContainer );
-	out.insert( "Constructed", m_isConstructedOrEquipped );
-	out.insert( "IsPickedUp", m_isPickedUp );
+	out.insert( "Constructed", m_isConstructed );
+	out.insert( "IsHeldBy", m_isHeldBy );
+	out.insert( "IsUsedBy", m_isUsedBy );
 	out.insert( "Value", m_value );
 	out.insert( "MadeBy", m_madeBy );
 	out.insert( "Quality", m_quality );
@@ -312,29 +330,39 @@ void Item::setInContainer( unsigned int container )
 	m_isInContainer = container;
 }
 
-bool Item::isPickedUp() const
+unsigned int Item::isHeldBy() const
 {
-	return m_isPickedUp;
+	return m_isHeldBy;
 }
 
-void Item::setPickedUp( bool status )
+void Item::setHeldBy( unsigned int creatureID )
 {
-	m_isPickedUp = status;
+	m_isHeldBy = creatureID;
+}
+
+unsigned int Item::isUsedBy() const
+{
+	return m_isUsedBy;
+}
+
+void Item::setUsedBy( unsigned int creatureID )
+{
+	m_isUsedBy = creatureID;
 }
 
 unsigned char Item::stackSize() const
 {
-	return DB::select( "StackSize", "Items", m_itemUID ).toUInt();
+	return DB::select( "StackSize", "Items", DBH::itemSID( m_itemUID ) ).toUInt();
 }
 
-bool Item::isConstructedOrEquipped() const
+bool Item::isConstructed() const
 {
-	return m_isConstructedOrEquipped;
+	return m_isConstructed;
 }
 
-void Item::setIsConstructedOrEquipped( bool value )
+void Item::setIsConstructed( bool value )
 {
-	m_isConstructedOrEquipped = value;
+	m_isConstructed = value;
 }
 
 void Item::addComponent( ItemMaterial im )
@@ -445,23 +473,23 @@ void Item::setColor( QString color )
 		{
 			m_extraData = new ItemExtraData;
 		}
-		m_extraData->color = Util::string2Color( color );
+		m_extraData->color = Global::util->string2Color( color );
 	}
 }
 
 int Item::attackValue() const
 {
-	return DB::select( "AttackValue", "Items", m_itemUID ).toInt();
+	return DB::select( "AttackValue", "Items", DBH::itemSID( m_itemUID ) ).toInt();
 }
 
 bool Item::isWeapon() const
 {
-	return DB::select( "AttackValue", "Items", m_itemUID ).toInt() > 0;
+	return DB::select( "AttackValue", "Items", DBH::itemSID( m_itemUID ) ).toInt() > 0;
 }
 
 bool Item::isTool() const
 {
-	return DB::select( "IsTool", "Items", m_itemUID ).toBool();
+	return DB::select( "IsTool", "Items", DBH::itemSID( m_itemUID ) ).toBool();
 }
 
 bool Item::insertItem( unsigned int itemID )
@@ -481,4 +509,9 @@ bool Item::removeItem( unsigned int itemID )
 		return m_extraData->containedItems.remove( itemID );
 	}
 	return false;
+}
+
+bool Item::isFree() const
+{
+	return !m_isConstructed && ( m_isInJob == 0 ) && ( m_isHeldBy == 0 ) && ( m_isUsedBy == 0 );
 }

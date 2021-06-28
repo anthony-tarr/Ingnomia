@@ -21,6 +21,8 @@
 
 #include <QString>
 
+class Game;
+
 enum class GrowLight : unsigned char
 {
 	SUN,
@@ -39,11 +41,11 @@ class Plant : public Object
 {
 public:
 	Plant();
-	Plant( Position& pos, QString ID, bool fullyGrown = false );
-	Plant( QVariant values );
+	Plant( Position& pos, QString ID, bool fullyGrown, Game* game );
+	Plant( QVariant values, Game* game );
 	~Plant();
 
-	virtual QVariant serialize();
+	virtual QVariant serialize() const;
 
 	OnTickReturn onTick( quint64 tickNumber, bool dayChanged, bool seasonChanged );
 
@@ -79,6 +81,15 @@ public:
 		return m_isTree && m_matureWood;
 	}
 
+	bool hasAlpha()
+	{
+		return m_hasAlpha;
+	}
+	int lightIntensity()
+	{
+		return m_lightIntensity;
+	}
+
 	//return true when plant is destroyed
 	bool fell();
 	//return true when plant is destroyed
@@ -101,7 +112,11 @@ public:
 	bool growsThisSeason();
 	void setGrowsThisSeason();
 
+	static bool testLayoutMulti( QString layoutSID, Position rootPos, Game* game );
+
 private:
+	QPointer<Game> g;
+
 	QString m_plantID;
 
 	Sprite* m_sprite = 0;
@@ -119,6 +134,8 @@ private:
 	bool m_isPlant            = false;
 	bool m_isMushroom         = false;
 	bool m_isUndergroundPlant = false;
+	bool m_hasAlpha           = false;
+	int m_lightIntensity      = 0;
 
 	bool m_growsThisSeason = true;
 

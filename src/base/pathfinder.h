@@ -24,8 +24,10 @@
 #include <QSet>
 #include <QThreadPool>
 #include <QVector>
+#include <optional>
 
 class PathFinderThread;
+class World;
 
 struct PathFindingRequest
 {
@@ -39,48 +41,44 @@ enum class PathFinderResult
 {
 	NoConnection,
 	FoundPath,
-	Running
+	Running,
+	Pending
 };
 
 class PathFinder : public QObject
 {
 	Q_OBJECT
+	Q_DISABLE_COPY_MOVE( PathFinder )
+public:
+	PathFinder( World* world, QObject* parent );
+	~PathFinder();
 
 private:
-	// Private Constructor
-	PathFinder();
-	// Stop the compiler generating methods of copy the object
-	PathFinder( PathFinder const& copy ) = delete;
-	PathFinder& operator=( PathFinder const& copy ) = delete;
+	struct PathFinderJob
+	{
+		Position start;
+		Position goal;
+		bool ignoreNoPass      = false;
+		PathFinderResult state = PathFinderResult::Pending;
+		std::vector<Position> path;
+	};
 
-	QThreadPool* m_threadPool;
-
-	QMap<unsigned int, std::vector<Position>> m_results;
-	QSet<unsigned int> m_currentRequestsFrom;
+	QMap<unsigned int, PathFinderJob> m_jobs;
 
 	QMutex m_mutex;
 
 	std::vector<Position> getNaivePath( Position& start, Position& goal );
 
+	World* m_world = nullptr;
+
 public:
-	~PathFinder();
-
-	static PathFinder& getInstance()
-	{
-		// The only instance
-		// Guaranteed to be lazy initialized
-		// Guaranteed that it will be destroyed correctly
-		static PathFinder instance;
-		return instance;
-	}
-
-	void init();
-
 	PathFinderResult getPath( unsigned int id, Position start, Position goal, bool ignoreNoPass, std::vector<Position>& path );
 
 	void cancelRequest( unsigned int id );
 
-	static bool checkConnectedRegions( const Position start, const Position goal );
+	bool checkConnectedRegions( const Position start, const Position goal );
 
-	void onThreadFinished( unsigned int consumerId, std::vector<Position> path );
+	void onResult( Position start, Position goal, bool ignoreNoPass, std::vector<Position> path );
+	// Dispatch workers for all outstanding pathfinding requests
+	void findPaths();
 };

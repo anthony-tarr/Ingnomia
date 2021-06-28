@@ -17,12 +17,14 @@
 */
 #include "aggregatorneighbors.h"
 
+#include "../game/game.h"
 #include "../game/neighbormanager.h"
 #include "../game/gnomemanager.h"
 
 #include "../gui/strings.h"
 
-AggregatorNeighbors::AggregatorNeighbors( QObject* parent )
+AggregatorNeighbors::AggregatorNeighbors( QObject* parent ) :
+	QObject(parent)
 {
 	
 }
@@ -31,11 +33,17 @@ AggregatorNeighbors::~AggregatorNeighbors()
 {
 }
 
+void AggregatorNeighbors::init( Game* game )
+{
+	g = game;
+}
+
 void AggregatorNeighbors::onRequestNeighborsUpdate()
 {
+	if( !g ) return;
 	m_neighborsInfo.clear();
 
-	for( const auto& kingdom : Global::nm().kingdoms() )
+	for( const auto& kingdom : g->nm()->kingdoms() )
 	{
 		GuiNeighborInfo gni;
 
@@ -172,14 +180,16 @@ void AggregatorNeighbors::onRequestNeighborsUpdate()
 
 void AggregatorNeighbors::onRequestMissions()
 {
-	emit signalMissions( Global::em().missions() );
+	if( !g ) return;
+	emit signalMissions( g->em()->missions() );
 }
 
 void AggregatorNeighbors::onRequestAvailableGnomes()
 {
+	if( !g ) return;
 	m_availableGnomes.clear();
 
-	for( auto gnome : Global::gm().gnomes() )
+	for( auto gnome : g->gm()->gnomes() )
 	{
 		if( !gnome->isOnMission() )
 		{
@@ -192,7 +202,14 @@ void AggregatorNeighbors::onRequestAvailableGnomes()
 
 void AggregatorNeighbors::onStartMission( MissionType type, MissionAction action, unsigned int targetKingdom, unsigned int gnomeID )
 {
-	Global::em().startMission( type, action, targetKingdom, gnomeID );
+	if( !g ) return;
+	g->em()->startMission( type, action, targetKingdom, gnomeID );
 
-	emit signalMissions( Global::em().missions() );
+	emit signalMissions( g->em()->missions() );
+}
+
+void AggregatorNeighbors::onUpdateMission( const Mission& mission )
+{
+	if( !g ) return;
+	emit signalUpdateMission( mission );
 }

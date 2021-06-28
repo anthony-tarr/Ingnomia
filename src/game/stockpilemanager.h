@@ -24,16 +24,16 @@
 
 class Job;
 class Stockpile;
+class Inventory;
+class Game;
 
 class StockpileManager : public QObject
 {
 	Q_OBJECT
-
+	Q_DISABLE_COPY_MOVE( StockpileManager )
 public:
-	StockpileManager();
+	StockpileManager( Game* parent );
 	~StockpileManager();
-
-	void reset();
 
 	void onTick( quint64 tick );
 
@@ -64,8 +64,8 @@ public:
 	unsigned int getJob();
 	bool finishJob( unsigned int jobID );
 	bool giveBackJob( unsigned int jobID );
-	Job& getJob( unsigned int jobID );
-	bool hasJobID( unsigned int jobID );
+	QSharedPointer<Job> getJob( unsigned int jobID );
+	bool hasJobID( unsigned int jobID ) const;
 
 	QList<unsigned int> allStockpiles()
 	{
@@ -90,6 +90,8 @@ public:
 	QString name( unsigned int id );
 
 private:
+	QPointer<Game> g;
+
 	QMap<unsigned int, Stockpile*> m_stockpiles;
 	QList<unsigned int> m_stockpilesOrdered;
 	QHash<unsigned int, unsigned int> m_allStockpileTiles;

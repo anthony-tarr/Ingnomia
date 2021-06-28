@@ -64,6 +64,12 @@ public:
 
 	void OnBack( BaseComponent* param );
 
+	void setUIScale( float value );
+	void updateVersion( QString version );
+
+	void OnResume( BaseComponent* param = nullptr );
+	void OnContinueGameFinished( bool gameLoaded );
+
 private:
 	const NoesisApp::DelegateCommand* GetStart() const;
 	const NoesisApp::DelegateCommand* GetSettings() const;
@@ -77,8 +83,6 @@ private:
 	const NoesisApp::DelegateCommand* GetBackToMain() const;
 	const NoesisApp::DelegateCommand* GetResume() const;
 	const NoesisApp::DelegateCommand* GetFadeInCompleted() const;
-	const NoesisApp::DelegateCommand* GetPause() const;
-	const NoesisApp::DelegateCommand* GetGuiZoom() const;
 
 	const char* GetPlatform() const;
 	const char* GetShowMainMenu() const;
@@ -86,21 +90,18 @@ private:
 	const char* GetWindowWidth() const;
 	const char* GetWindowHeight() const;
 
+	const char* GetVersion() const;
+
 	void OnStart( BaseComponent* param );
 	void OnSettings( BaseComponent* param );
 	void OnNewGame( BaseComponent* param );
 	void OnContinueGame( BaseComponent* param );
-	void OnNewGameFinished();
-	void OnContinueGameFinished( bool gameLoaded );
 	void OnSetupGame( BaseComponent* param );
 	void OnLoadGame( BaseComponent* param );
 	void OnSaveGame( BaseComponent* param );
 	void OnExit( BaseComponent* param );
 	void OnBackToMain( BaseComponent* param );
-	void OnResume( BaseComponent* param );
 	void OnFadeInCompleted( BaseComponent* params );
-	void OnPause( BaseComponent* params );
-	void OnGuiZoom( BaseComponent* params );
 
 	State GetState() const;
 	void SetState( State value );
@@ -120,8 +121,6 @@ private:
 	NoesisApp::DelegateCommand _backToMain;
 	NoesisApp::DelegateCommand _resume;
 	NoesisApp::DelegateCommand _fadeInCompleted;
-	NoesisApp::DelegateCommand _pause;
-	NoesisApp::DelegateCommand _guiZoom;
 
 	State _state;
 	NewGameModel _newGameModel;
@@ -133,8 +132,10 @@ private:
 	int _windowHeight;
 	int _realWidth;
 	int _realHeight;
+	float m_scale = 1.0;
 	Noesis::String _windowWidthString;
 	Noesis::String _windowHeightString;
+	Noesis::String m_version;
 
 	ProxyMainView* m_proxy = nullptr;
 

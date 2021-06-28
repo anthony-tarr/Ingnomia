@@ -33,10 +33,21 @@
 
 SpriteFactory::SpriteFactory()
 {
+	init();
 }
 
 SpriteFactory::~SpriteFactory()
 {
+	for( auto& sprite : m_sprites )
+	{
+		delete sprite;
+	}
+	m_sprites.clear();
+	for( auto& def : m_spriteDefinitions )
+	{
+		delete def;
+	}
+	m_spriteDefinitions.clear();
 }
 
 bool SpriteFactory::init()
@@ -72,12 +83,12 @@ bool SpriteFactory::init()
 
 	for ( auto color : DB::select2( "Color", "Materials", "Type", "Dye" ) )
 	{
-		m_colors.push_back( Util::string2QColor( color.toString() ) );
+		m_colors.push_back( Global::util->string2QColor( color.toString() ) );
 	}
 
 	for ( auto color : DB::selectRows( "HairColors" ) )
 	{
-		m_hairColors.push_back( Util::string2QColor( color.value( "Color" ).toString() ) );
+		m_hairColors.push_back( Global::util->string2QColor( color.value( "Color" ).toString() ) );
 	}
 
 	bool loaded = true;
@@ -88,7 +99,7 @@ bool SpriteFactory::init()
 		if ( !m_pixmapSources.contains( tilesheet ) )
 		{
 			QPixmap pm;
-			loaded = pm.load( Config::getInstance().get( "dataPath" ).toString() + "/tilesheet/" + tilesheet );
+			loaded = pm.load( Global::cfg->get( "dataPath" ).toString() + "/tilesheet/" + tilesheet );
 			if ( !loaded )
 			{
 				loaded = pm.load( tilesheet );
@@ -99,10 +110,57 @@ bool SpriteFactory::init()
 				}
 			}
 			m_pixmapSources.insert( tilesheet, pm );
+			/*
+			if( tilesheet == "default.png" )
+			{
+				QSet<QString>unused;
+				int count = 0;
+				for( auto r : DB::selectRows( "BaseSprites" ) )
+				{
+					if( r.value( "Tilesheet"  ).toString() == "default.png" )
+					if( DB::numRows( "Sprites", r.value( "ID" ).toString() ) == 0 )
+						if( DB::numRows2( "Sprites", r.value( "ID" ).toString() ) == 0 )
+							if( DB::numRows2( "Sprites_ByMaterialTypes", r.value( "ID" ).toString() ) == 0 )
+								if( DB::numRows2( "Sprites_ByMaterials", r.value( "ID" ).toString() ) == 0 )
+									if( DB::numRows2( "Sprites_Combine", r.value( "ID" ).toString() ) == 0 )
+										if( DB::numRows2( "Sprites_Frames", r.value( "ID" ).toString() ) == 0 )
+											if( DB::numRows2( "Sprites_Random", r.value( "ID" ).toString() ) == 0 )
+												if( DB::numRows2( "Sprites_Rotations", r.value( "ID" ).toString() ) == 0 )
+													if( DB::numRows2( "Sprites_Seasons", r.value( "ID" ).toString() ) == 0 )
+														if( DB::numRows2( "Sprites_Seasons_Rotations", r.value( "ID" ).toString() ) == 0 )
+														{
+															qDebug() << count++ << r.value( "ID" ).toString() << r.value( "Tilesheet" ).toString();
+															unused.insert( r.value( "ID" ).toString() );
+														}
+				}
+
+
+				int width = pm.width();
+				int height = pm.height();
+				QPixmap newPM( width, height );
+				
+				newPM.fill( Qt::transparent);
+				QPainter painter( &newPM );
+				
+				for( auto r : DB::selectRows( "BaseSprites" ) )
+				{
+					if( r.value( "Tilesheet" ).toString() == "default.png" )
+					{
+						if( !unused.contains( r.value( "ID" ).toString() ) )
+						{
+							auto p = r.value( "SourceRectangle" ).toString().split( " " );
+							auto sp = pm.copy( p[0].toInt(), p[1].toInt(), 32, 36 );
+							painter.drawPixmap( p[0].toInt(), p[1].toInt(), sp );
+						}
+					}
+				}
+				newPM.save( Global::cfg->get( "dataPath" ).toString() + "/tilesheet2/" + tilesheet );
+			}
+			*/
 		}
 		m_baseSprites.insert( row.value( "ID" ).toString(), extractPixmap( tilesheet, row ) );
 	}
-
+	
 	QList<QVariantMap> spriteList = DB::selectRows( "Sprites" );
 	for ( auto& sprite : spriteList )
 	{
@@ -281,14 +339,15 @@ bool SpriteFactory::init()
 		}
 	}
 
+	/* only for debug purpose
 	QJsonArray ja;
 	for ( auto sprite : spriteList )
 	{
 		QJsonValue jv = QJsonValue::fromVariant( sprite );
 		ja.append( jv );
 	}
-
 	IO::saveFile( "spriteconv.json", ja );
+	*/
 
 	for ( auto row : spriteList )
 	{
@@ -392,15 +451,7 @@ unsigned char SpriteFactory::rotationToChar( const QString suffix )
 
 Sprite* SpriteFactory::createSprite( const QString itemSID, QStringList materialSIDs, const QMap<int, int>& random )
 {
-#if DEBUG
-	for ( auto& matString : materialSIDs )
-	{
-		if ( matString == "None" )
-		{
-			qDebug() << "#" << itemSID << materialSIDs;
-		}
-	}
-#endif
+	QMutexLocker ml( &m_mutex );
 	QString key = itemSID;
 	m_randomNumbers.clear();
 	if ( random.isEmpty() )
@@ -445,64 +496,42 @@ Sprite* SpriteFactory::createSprite( const QString itemSID, QStringList material
 	}
 	else
 	{
-		bool isClient = Config::getInstance().get( "IsClient" ).toBool();
-		if ( !isClient )
+		sprite = createSpriteMaterial( itemSID, materialSIDs, key );
+
+		if ( !sprite )
 		{
-			sprite = createSpriteMaterial( itemSID, materialSIDs, key );
-
-			if ( !sprite )
-			{
-				return m_sprites.value( m_spriteIDs.value( "SolidSelectionWall_Purple" ) );
-			}
-
-			sprite->uID = m_sprites.size();
-			m_spriteIDs.insert( key, m_sprites.size() );
-			m_sprites.append( sprite );
-
-			addPixmapToPixelData( sprite );
-
-			m_textureAdded = true;
-			SpriteCreation sc { itemSID, materialSIDs, m_randomNumbers, sprite->uID };
-			m_spriteCreations.push_back( sc );
-
-			if ( sprite->anim )
-			{
-				m_sprites.append( nullptr );
-				m_sprites.append( nullptr );
-				m_sprites.append( nullptr );
-			}
+			return m_sprites.value( m_spriteIDs.value( "SolidSelectionWall_Purple" ) );
 		}
-		QString ncd = itemSID + ";" + materialSIDs.join( '_' ) + ";";
-		if ( random.isEmpty() )
+
+		sprite->uID = m_sprites.size();
+		m_spriteIDs.insert( key, m_sprites.size() );
+		m_sprites.append( sprite );
+
+		addPixmapToPixelData( sprite );
+
+		m_textureAdded = true;
+		SpriteCreation sc { itemSID, materialSIDs, m_randomNumbers, sprite->uID };
+		m_spriteCreations.push_back( sc );
+
+		if ( sprite->anim )
 		{
-			GameState::addChange2( NetworkCommand::CREATESPRITE, ncd );
-		}
-		else
-		{
-			ncd += Util::mapJoin( random );
-			GameState::addChange2( NetworkCommand::CREATESPRITERANDOM, ncd );
-		}
-		if ( isClient )
-		{
-			return nullptr;
+			m_sprites.append( nullptr );
+			m_sprites.append( nullptr );
+			m_sprites.append( nullptr );
 		}
 	}
 
 	if ( itemSID.endsWith( "Wall" ) )
 	{
+		ml.unlock();
 		createSprite( itemSID + "Short", materialSIDs, random );
 	}
-	/*
-	if( itemSID.startsWith( "GrassSoilU" ) )
-	{
-		QImage img_ = sprite->pixmap( "Spring", 0 ).toImage();
-		img_.save( "d:/tmp/gnome/" + key +  ".png", "PNG" );
-	}
-	*/
 
 	return sprite;
 }
 
+// used for loading definitions, doesn't check if sprite exists as it will not exist and 
+// doesn't create short walls because they are in the definition anyway
 Sprite* SpriteFactory::createSprite2( const QString itemSID, QStringList materialSIDs, const QMap<int, int>& random )
 {
 	QString key = itemSID;
@@ -544,8 +573,6 @@ Sprite* SpriteFactory::createSprite2( const QString itemSID, QStringList materia
 	}
 	Sprite* sprite = nullptr;
 
-	bool isClient = Config::getInstance().get( "IsClient" ).toBool();
-
 	sprite = createSpriteMaterial( itemSID, materialSIDs, key );
 
 	if ( !sprite )
@@ -569,23 +596,12 @@ Sprite* SpriteFactory::createSprite2( const QString itemSID, QStringList materia
 		m_sprites.append( nullptr );
 		m_sprites.append( nullptr );
 	}
-
-	QString ncd = itemSID + ";" + materialSIDs.join( '_' ) + ";";
-	if ( random.isEmpty() )
-	{
-		GameState::addChange2( NetworkCommand::CREATESPRITE, ncd );
-	}
-	else
-	{
-		ncd += Util::mapJoin( random );
-		GameState::addChange2( NetworkCommand::CREATESPRITERANDOM, ncd );
-	}
-
 	return sprite;
 }
 
 Sprite* SpriteFactory::createAnimalSprite( const QString spriteSID, const QMap<int, int>& random )
 {
+	QMutexLocker ml( &m_mutex );
 	QString key = spriteSID;
 	m_randomNumbers.clear();
 	if ( random.isEmpty() )
@@ -632,11 +648,6 @@ Sprite* SpriteFactory::createAnimalSprite( const QString spriteSID, const QMap<i
 	return sprite;
 }
 
-Sprite* SpriteFactory::createSpriteNetwork( const QString itemSID, const QStringList materialSIDs, const QMap<int, int>& random )
-{
-	return nullptr;
-}
-
 bool SpriteFactory::containsRandom( const QString itemSID, const QStringList materialSIDs )
 {
 	QString spriteSID = DBH::spriteID( itemSID );
@@ -645,11 +656,6 @@ bool SpriteFactory::containsRandom( const QString itemSID, const QStringList mat
 		spriteSID = itemSID;
 	}
 	return DBH::spriteIsRandom( spriteSID );
-}
-
-bool SpriteFactory::createSpriteDefinition( QString spriteID )
-{
-	return true;
 }
 
 QString SpriteFactory::createSpriteMaterialDryRun( const QString itemSID, const QStringList materialSIDs )
@@ -665,7 +671,7 @@ QString SpriteFactory::createSpriteMaterialDryRun( const QString itemSID, const 
 	if ( !m_spriteDefinitions.contains( spriteSID ) )
 	{
 		qDebug() << "***ERROR*** sprite definition " << spriteSID << " for item " << itemSID << " doesn't exist.";
-		//exit( 0 );
+		//abort();
 	}
 	DefNode* dn = m_spriteDefinitions.value( spriteSID );
 	if ( dn )
@@ -708,7 +714,7 @@ Sprite* SpriteFactory::createSpriteMaterial( const QString itemSID, const QStrin
 	if ( !m_spriteDefinitions.contains( spriteSID ) )
 	{
 		qDebug() << "***ERROR*** sprite definition " << spriteSID << " for item " << itemSID << " doesn't exist.";
-		//exit( 0 );
+		//abort();
 	}
 	DefNode* dn    = m_spriteDefinitions.value( spriteSID );
 	Sprite* sprite = nullptr;
@@ -735,7 +741,7 @@ Sprite* SpriteFactory::createSpriteMaterial( const QString itemSID, const QStrin
 
 		sprite->opacity       = m_opacity;
 		sprite->randomNumbers = m_randomNumbers;
-		sprite->anim          = DB::select( "Anim", "Sprites", spriteSID ).toBool();
+		sprite->anim          = DBH::spriteHasAnim( spriteSID );
 	}
 	return sprite;
 }
@@ -764,6 +770,7 @@ void SpriteFactory::parseDef( DefNode* parent, QVariantMap def )
 	parent->tint            = def.value( "Tint" ).toString();
 	parent->baseSprite      = def.value( "BaseSprite" ).toString();
 	parent->defaultMaterial = def.value( "DefaultMaterial" ).toString();
+	parent->hasTransp       = def.value( "HasTransp" ).toBool();
 
 	/*
 	if( def.contains( "ByItems" ) )
@@ -902,6 +909,7 @@ Sprite* SpriteFactory::getBaseSprite( const DefNode* node, const QString itemSID
 		SpritePixmap* sprite = new SpritePixmap( pm, m_offset );
 		sprite->applyEffect( node->effect );
 		sprite->applyTint( node->tint, materialSID );
+		sprite->hasTransp = node->hasTransp;
 		return sprite;
 	}
 
@@ -916,6 +924,7 @@ Sprite* SpriteFactory::getBaseSprite( const DefNode* node, const QString itemSID
 
 		sr->applyEffect( node->effect );
 		sr->applyTint( node->tint, materialSID );
+		sr->hasTransp = node->hasTransp;
 		return sr;
 	}
 	if ( node->childs.size() && node->childs.first()->type == "Season" )
@@ -927,6 +936,7 @@ Sprite* SpriteFactory::getBaseSprite( const DefNode* node, const QString itemSID
 		}
 		ss->applyEffect( node->effect );
 		ss->applyTint( node->tint, materialSID );
+		ss->hasTransp = node->hasTransp;
 		return ss;
 	}
 	if ( node->childs.contains( itemSID ) )
@@ -942,6 +952,7 @@ Sprite* SpriteFactory::getBaseSprite( const DefNode* node, const QString itemSID
 		}
 		sf->applyEffect( node->effect );
 		sf->applyTint( node->tint, materialSID );
+		sf->hasTransp = node->hasTransp;
 		return sf;
 	}
 
@@ -975,6 +986,7 @@ Sprite* SpriteFactory::getBaseSprite( const DefNode* node, const QString itemSID
 				s->combine( s2, season, 3, 3 );
 			}
 		}
+		s->hasTransp = node->hasTransp;
 		return s;
 	}
 	if ( node->type == "RandomNode" )
@@ -983,6 +995,7 @@ Sprite* SpriteFactory::getBaseSprite( const DefNode* node, const QString itemSID
 		Sprite* rs       = getBaseSprite( node->childs["Random" + QString::number( randomNumber )], itemSID, materialSIDs );
 		rs->applyEffect( node->childs["Random" + QString::number( randomNumber )]->effect );
 		rs->applyTint( node->childs["Random" + QString::number( randomNumber )]->tint, materialSID );
+		rs->hasTransp = node->hasTransp;
 		return rs;
 	}
 
@@ -994,6 +1007,7 @@ Sprite* SpriteFactory::getBaseSprite( const DefNode* node, const QString itemSID
 			Sprite* pm = getBaseSprite( node->childs[materialType], itemSID, materialSIDs );
 			pm->applyEffect( node->effect );
 			pm->applyTint( node->tint, materialSID );
+			pm->hasTransp = node->hasTransp;
 			return pm;
 		}
 
@@ -1003,6 +1017,7 @@ Sprite* SpriteFactory::getBaseSprite( const DefNode* node, const QString itemSID
 			Sprite* pm = getBaseSprite( node->childs[materialSID], itemSID, materialSIDs );
 			pm->applyEffect( node->effect );
 			pm->applyTint( node->tint, materialSID );
+			pm->hasTransp = node->hasTransp;
 			return pm;
 		}
 		// if no other hit
@@ -1013,6 +1028,7 @@ Sprite* SpriteFactory::getBaseSprite( const DefNode* node, const QString itemSID
 				Sprite* pm = getBaseSprite( node->childs[node->defaultMaterial], itemSID, materialSIDs );
 				pm->applyEffect( node->effect );
 				pm->applyTint( node->tint, materialSID );
+				pm->hasTransp = node->hasTransp;
 				return pm;
 			}
 			else
@@ -1020,6 +1036,7 @@ Sprite* SpriteFactory::getBaseSprite( const DefNode* node, const QString itemSID
 				Sprite* pm = getBaseSprite( node->childs.first(), itemSID, materialSIDs, materialID );
 				pm->applyEffect( node->effect );
 				pm->applyTint( node->tint, materialSID );
+				pm->hasTransp = node->hasTransp;
 				return pm;
 			}
 		}
@@ -1144,6 +1161,7 @@ QString SpriteFactory::getMaterialType( const QString materialSID )
 
 Sprite* SpriteFactory::getSprite( const int id )
 {
+	QMutexLocker ml( &m_mutex );
 	if ( m_sprites.size() > id )
 	{
 		return m_sprites[id];
@@ -1170,9 +1188,9 @@ void SpriteFactory::createSprites( QList<SpriteCreation> scl )
 	{
 		if ( sc.uID > 30 )
 		{
-			if ( sc.uID != m_sprites.size() )
+			if ( sc.uID != static_cast<unsigned int>( m_sprites.size() ) )
 			{
-				if ( sc.uID < m_sprites.size() )
+				if ( sc.uID < static_cast<unsigned int>( m_sprites.size() ) )
 				{
 					qWarning() << "## Loosing sprite " << sc.uID << m_sprites.size() << sc.itemSID << sc.materialSIDs;
 					continue;
@@ -1180,7 +1198,7 @@ void SpriteFactory::createSprites( QList<SpriteCreation> scl )
 				else
 				{
 					qDebug() << "## Missing sprite before " << sc.uID << m_sprites.size() << sc.itemSID << sc.materialSIDs;
-					while ( sc.uID > m_sprites.size() )
+					while ( sc.uID > static_cast<unsigned int>( m_sprites.size() ) )
 					{
 						// Sprite was probably lost due to a deleted definition, ID won't be reused
 						m_sprites.append( nullptr );
@@ -1227,7 +1245,7 @@ void SpriteFactory::addPixmapToPixelData( Sprite* sprite )
 
 			if ( m_pixelData.size() < tex + 1 )
 			{
-				int maxArrayTextures = Config::getInstance().get( "MaxArrayTextures" ).toInt();
+				int maxArrayTextures = Global::cfg->get( "MaxArrayTextures" ).toInt();
 				int bytes            = 32 * 64 * 4 * maxArrayTextures;
 
 				for ( int i = 0; i < 32; ++i )
@@ -1271,7 +1289,7 @@ void SpriteFactory::addPixmapToPixelData( Sprite* sprite )
 
 		if ( m_pixelData.size() < tex + 1 )
 		{
-			int maxArrayTextures = Config::getInstance().get( "MaxArrayTextures" ).toInt();
+			int maxArrayTextures = Global::cfg->get( "MaxArrayTextures" ).toInt();
 			int bytes            = 32 * 64 * 4 * maxArrayTextures;
 
 			for ( int i = 0; i < 32; ++i )
@@ -1416,12 +1434,13 @@ QPixmap SpriteFactory::getTintedBaseSprite( QString baseSprite, QString material
 	}
 
 	QPixmap pm = m_baseSprites[baseSprite];
-	tintPixmap( pm, Util::string2QColor( DB::select( "Color", "Materials", material ).toString() ) );
+	tintPixmap( pm, Global::util->string2QColor( DBH::materialColor( material ) ) );
 	return pm;
 }
 
 Sprite* SpriteFactory::setCreatureSprite( const unsigned int creatureUID, QVariantList components, QVariantList componentsBack, bool isDead )
 {
+	QMutexLocker ml( &m_mutex );
 	QPixmap pmfr( 32, 32 );
 	pmfr.fill( QColor( 0, 0, 0, 0 ) );
 	QPainter painter( &pmfr );
@@ -1599,6 +1618,7 @@ Sprite* SpriteFactory::setCreatureSprite( const unsigned int creatureUID, QVaria
 
 Sprite* SpriteFactory::getCreatureSprite( const unsigned int id, unsigned int& spriteID )
 {
+	QMutexLocker ml( &m_mutex );
 	if ( m_creatureSpriteIDs.contains( id ) )
 	{
 		spriteID = m_creatureSpriteIDs[id];
@@ -1649,4 +1669,28 @@ QPixmap SpriteFactory::baseSprite( QString id )
 	}
 	qDebug() << "Base sprite " << id << " doesn't exist";
 	return QPixmap( 32, 32 );
+}
+
+unsigned int SpriteFactory::thoughtBubbleID( QString sid )
+{
+	QMutexLocker ml( &m_mutex );
+	return m_thoughtBubbleIDs.value( sid );
+}
+
+int SpriteFactory::texesUsed()
+{
+	QMutexLocker ml( &m_mutex );
+	return m_texesUsed;
+}
+
+unsigned int SpriteFactory::size()
+{
+	QMutexLocker ml( &m_mutex );
+	return m_spriteIDs.size();
+}
+
+QVector<uint8_t> SpriteFactory::pixelData( int index )
+{
+	QMutexLocker ml( &m_mutex );
+	return m_pixelData[index];
 }

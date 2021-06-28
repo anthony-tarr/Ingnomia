@@ -16,17 +16,9 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "GameModel.h"
-
-#include "../../base/config.h"
-#include "../../base/db.h"
-#include "../../base/global.h"
-#include "../../base/selection.h"
-#include "../../base/util.h"
-#include "../../game/gamemanager.h"
-#include "../../game/inventory.h"
-#include "../eventconnector.h"
-#include "../strings.h"
 #include "ProxyGameView.h"
+
+#include "../strings.h"
 
 #include <NsApp/Application.h>
 #include <NsCore/Log.h>
@@ -38,8 +30,6 @@
 #include <QDebug>
 #include <QImage>
 #include <QPixmap>
-
-#include <functional>
 
 using namespace IngnomiaGUI;
 using namespace Noesis;
@@ -87,159 +77,95 @@ const char* BuildButton::GetImage() const
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-BuildItem::BuildItem( QString name, QString sid, BuildItemType type )
+BuildItem::BuildItem( const GuiBuildItem& gbi, ProxyGameView* proxy )
 {
-	_name = name.toStdString().c_str();
-	_sid  = sid;
-	_type = type;
+	m_name = gbi.name.toStdString().c_str();
+	m_sid  = gbi.id;
+	m_type = gbi.biType;
+	m_proxy = proxy;
 
-	_cmdBuild.SetExecuteFunc( MakeDelegate( this, &BuildItem::onCmdBuild ) );
+	m_cmdBuild.SetExecuteFunc( MakeDelegate( this, &BuildItem::onCmdBuild ) );
 
-	_requiredItems = *new Noesis::ObservableCollection<NRequiredItem>();
+	m_requiredItems = *new Noesis::ObservableCollection<NRequiredItem>();
+	m_bitmapSource = BitmapImage::Create( gbi.iconWidth, gbi.iconHeight, 96, 96, gbi.buffer.data(), gbi.iconWidth * 4, BitmapSource::Format::Format_RGBA8 );
 
-	switch ( type )
+	for( auto ri : gbi.requiredItems )
 	{
-		case BuildItemType::Workshop:
-		{
-			for ( auto row : DB::selectRows( "Workshops_Components", sid ) )
-			{
-				if ( !row.value( "ItemID" ).toString().isEmpty() )
-				{
-					auto item = MakePtr<NRequiredItem>( row.value( "ItemID" ).toString(), row.value( "Amount" ).toInt() );
-
-					_requiredItems->Add( item );
-				}
-			}
-
-			QStringList mats;
-			for ( int i = 0; i < 25; ++i )
-				mats.push_back( "None" );
-
-			QPixmap pm = Util::createWorkshopImage( sid, mats );
-
-			std::vector<unsigned char> buffer;
-
-			Util::createBufferForNoesisImage( pm, buffer );
-
-			_bitmapSource = BitmapImage::Create( pm.width(), pm.height(), 96, 96, buffer.data(), pm.width() * 4, BitmapSource::Format::Format_RGBA8 );
-		}
-		break;
-		case BuildItemType::Terrain:
-		{
-			for ( auto row : DB::selectRows( "Constructions_Components", sid ) )
-			{
-				_requiredItems->Add( MakePtr<NRequiredItem>( row.value( "ItemID" ).toString(), row.value( "Amount" ).toInt() ) );
-			}
-
-			QStringList mats;
-			for ( int i = 0; i < 25; ++i )
-				mats.push_back( "None" );
-
-			QPixmap pm = Util::createConstructionImage( sid, mats );
-
-			std::vector<unsigned char> buffer;
-
-			Util::createBufferForNoesisImage( pm, buffer );
-
-			_bitmapSource = BitmapImage::Create( pm.width(), pm.height(), 96, 96, buffer.data(), pm.width() * 4, BitmapSource::Format::Format_RGBA8 );
-		}
-		break;
-		case BuildItemType::Item:
-		{
-			auto rows = DB::selectRows( "Constructions_Components", sid );
-
-			if( rows.size() )
-			{
-				for ( auto row : rows )
-				{
-					_requiredItems->Add( MakePtr<NRequiredItem>( row.value( "ItemID" ).toString(), row.value( "Amount" ).toInt() ) );
-				}
-			}
-			else
-			{
-				_requiredItems->Add( MakePtr<NRequiredItem>( sid, 1 ) );
-			}
-
-
-			QStringList mats;
-			for ( int i = 0; i < 25; ++i )
-				mats.push_back( "None" );
-
-			QPixmap pm = Util::createItemImage( sid, mats );
-
-			std::vector<unsigned char> buffer;
-
-			Util::createBufferForNoesisImage( pm, buffer );
-
-			_bitmapSource = BitmapImage::Create( pm.width(), pm.height(), 96, 96, buffer.data(), pm.width() * 4, BitmapSource::Format::Format_RGBA8 );
-		}
-		break;
+		auto item = MakePtr<NRequiredItem>( ri.itemID, ri.amount, ri.availableMats );
+		m_requiredItems->Add( item );
 	}
 }
 
 const char* BuildItem::GetName() const
 {
-	return _name.Str();
+	return m_name.Str();
 }
 
 QString BuildItem::sid() const
 {
-	return _sid;
+	return m_sid;
 }
 
 Noesis::ObservableCollection<NRequiredItem>* BuildItem::requiredItems() const
 {
-	return _requiredItems;
+	return m_requiredItems;
 }
 
 const NoesisApp::DelegateCommand* BuildItem::GetCmdBuild() const
 {
-	return &_cmdBuild;
+	return &m_cmdBuild;
+}
+
+const char* BuildItem::GetShowReplaceButton() const
+{
+	if( m_type == BuildItemType::Terrain )
+	{
+		if( m_sid.endsWith( "Wall" ) || m_sid.endsWith( "Floor" ) || m_sid.startsWith( "FancyFloor" ) ||  m_sid.startsWith( "FancyWall" ) )
+		{
+			return "Visible";
+		}
+	}
+	return "Hidden";
+}
+
+const char* BuildItem::GetShowFillHoleButton() const
+{
+	if( m_type == BuildItemType::Terrain )
+	{
+		if( m_sid.endsWith( "Wall" ) || m_sid.startsWith( "FancyWall" ) )
+		{
+			return "Visible";
+		}
+	}
+	return "Hidden";
 }
 
 const ImageSource* BuildItem::getBitmapSource() const
 {
-	return _bitmapSource;
+	return m_bitmapSource;
 }
 
 void BuildItem::onCmdBuild( BaseComponent* param )
 {
 	QStringList mats;
-	for ( int i = 0; i < _requiredItems->Count(); ++i )
+	for ( int i = 0; i < m_requiredItems->Count(); ++i )
 	{
-		auto item = _requiredItems->Get( i );
+		auto item = m_requiredItems->Get( i );
 		auto mat  = item->GetSelectedMaterial();
 		mats.append( mat->sid() );
 	}
-
-	Selection::getInstance().setMaterials( mats );
-	Selection::getInstance().setItemID( _sid );
-
-	switch ( _type )
+	QString qParam;
+	if( param )
 	{
-		case BuildItemType::Workshop:
-		{
-			Selection::getInstance().setAction( "BuildWorkshop" );
-		}
-		break;
-		case BuildItemType::Terrain:
-		{
-			QString type = DB::select( "Type", "Constructions", _sid ).toString();
-
-			Selection::getInstance().setAction( "Build" + type );
-		}
-		break;
-		case BuildItemType::Item:
-		{
-			Selection::getInstance().setAction( "BuildItem" );
-		}
-		break;
+		qParam = param->ToString().Str();
 	}
-	EventConnector::getInstance().onBuild();
+
+	m_proxy->requestCmdBuild( m_type, qParam, m_sid, mats );
 }
 
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-NRequiredItem::NRequiredItem( QString sid, int amount )
+NRequiredItem::NRequiredItem( QString sid, int amount, const QList<QPair<QString, int>>& mats )
 {
 	_name   = S::s( "$ItemName_" + sid ).toStdString().c_str();
 	_sid    = sid;
@@ -247,18 +173,20 @@ NRequiredItem::NRequiredItem( QString sid, int amount )
 
 	_availableMaterials = *new Noesis::ObservableCollection<AvailableMaterial>();
 
-	auto mats = Global::inv().materialCountsForItem( sid );
-
-	_availableMaterials->Add( MakePtr<AvailableMaterial>( "any", mats["any"], _sid ) );
-	for ( auto key : mats.keys() )
+	for( auto mat : mats )
 	{
-		if ( key != "any" )
-		{
-			_availableMaterials->Add( MakePtr<AvailableMaterial>( key, mats[key], _sid ) );
-		}
+		_availableMaterials->Add( MakePtr<AvailableMaterial>( mat.first, mat.second, _sid ) );
 	}
 
 	SetSelectedMaterial( _availableMaterials->Get( 0 ) );
+}
+
+NRequiredItem::NRequiredItem( QString sid, int amount )
+{
+	_name   = S::s( "$ItemName_" + sid ).toStdString().c_str();
+	_sid    = sid;
+	_amount = QString::number( amount ).toStdString().c_str();
+	_availableMaterials = *new Noesis::ObservableCollection<AvailableMaterial>();
 }
 
 const char* NRequiredItem::GetName() const
@@ -327,7 +255,6 @@ GameModel::GameModel()
 
 	_cmdLeftCommandButton.SetExecuteFunc( MakeDelegate( this, &GameModel::CmdLeftCommandButton ) );
 	_cmdRightCommandButton.SetExecuteFunc( MakeDelegate( this, &GameModel::CmdRightCommandButton ) );
-	_cmdBack.SetExecuteFunc( MakeDelegate( this, &GameModel::OnCmdBack ) );
 	_cmdSimple.SetExecuteFunc( MakeDelegate( this, &GameModel::OnCmdSimple ) );
 
 	m_closeWindowCmd.SetExecuteFunc( MakeDelegate( this, &GameModel::onCloseWindowCmd ) );
@@ -341,81 +268,133 @@ GameModel::GameModel()
 	m_proxy = new ProxyGameView;
 	m_proxy->setParent( this );
 
+	
+
 	_commandButtons = *new ObservableCollection<CommandButton>();
 	_buildButtons   = *new ObservableCollection<BuildButton>();
 	_buildItems     = *new ObservableCollection<BuildItem>();
+	m_watchList		= *new Noesis::ObservableCollection<GameItem>();
 
-	_year  = "*Year*";
-	_day   = "*Day*";
-	_time  = "*Time*";
-	_level = "*Level*";
+	m_year  = "*Year*";
+	m_day   = "*Day*";
+	m_time  = "*Time*";
+	m_level = "*Level*";
+
+	m_kingdomName = "*Kingdom Name*";
 
 	setShowTileInfo( 0 );
 }
 
+void GameModel::updateKingdomInfo( QString name, QString info1, QString info2, QString info3 )
+{
+	m_kingdomName = name.toStdString().c_str();
+	m_kingdomInfo1 = info1.toStdString().c_str();
+	m_kingdomInfo2 = info2.toStdString().c_str();
+	m_kingdomInfo3 = info3.toStdString().c_str();
+	OnPropertyChanged( "KingdomName" );
+	OnPropertyChanged( "KingdomInfo1" );
+	OnPropertyChanged( "KingdomInfo2" );
+	OnPropertyChanged( "KingdomInfo3" );
+}
+
 void GameModel::setTimeAndDate( int minute, int hour, int day, QString season, int year, QString sunStatus )
 {
-	_year = ( "Year " + QString::number( year ) ).toStdString().c_str();
-
-	QString dayString;
-
-	switch ( day )
 	{
-		case 1:
-			dayString = "1st day of ";
-			break;
-		case 2:
-			dayString = "2nd day of ";
-			break;
-		case 3:
-			dayString = "3rd day of ";
-			break;
-		default:
-			dayString = QString::number( day ) + "th day of ";
-			break;
+		const auto tmp = ( "Year " + QString::number( year ) ).toStdString();
+		if ( tmp.compare( m_year.Str() ) != 0 )
+		{
+			m_year = tmp.c_str();
+			OnPropertyChanged( "Year" );
+		}
 	}
-	_day = ( dayString + season ).toStdString().c_str();
 
-	_time = ( QString( "%1" ).arg( hour, 2, 10, QChar( '0' ) ) + ":" + QString( "%1" ).arg( minute, 2, 10, QChar( '0' ) ) ).toStdString().c_str();
+	{
+		QString dayString;
 
-	_sun = sunStatus.toStdString().c_str();
+		switch ( day )
+		{
+			case 1:
+				dayString = "1st day of ";
+				break;
+			case 2:
+				dayString = "2nd day of ";
+				break;
+			case 3:
+				dayString = "3rd day of ";
+				break;
+			default:
+				dayString = QString::number( day ) + "th day of ";
+				break;
+		}
+		const auto tmp = ( dayString + season ).toStdString();
+		if ( tmp.compare( m_year.Str() ) != 0 )
+		{
+			m_day = tmp.c_str();
+			OnPropertyChanged( "Day" );
+		}
+	}
 
-	OnPropertyChanged( "Year" );
-	OnPropertyChanged( "Day" );
-	OnPropertyChanged( "Time" );
-	OnPropertyChanged( "Sun" );
+	{
+		m_time = ( QString( "%1" ).arg( hour, 2, 10, QChar( '0' ) ) + ":" + QString( "%1" ).arg( minute, 2, 10, QChar( '0' ) ) ).toStdString().c_str();
+		OnPropertyChanged( "Time" );
+	}
 
-	QString path = "Images/clock/";
-	if( season == "Spring" ) path += "s";
-	else if( season == "Summer" ) path += "u";
-	else if( season == "Autumn" ) path += "v";
-	else path += "w";
+	{
+		const auto tmp = sunStatus.toStdString();
+		if ( tmp.compare( m_sun.Str() ) != 0 )
+		{
+			m_sun = tmp.c_str();
+			OnPropertyChanged( "Sun" );
+		}
+	}
 
-	hour /= 2;
-	path += QStringLiteral( "%1" ).arg( hour, 2, 10, QLatin1Char( '0' ) );
-	path += ".png";
+	{
+		QString path = "Images/clock/";
+		if ( season == "Spring" )
+			path += "s";
+		else if ( season == "Summer" )
+			path += "u";
+		else if ( season == "Autumn" )
+			path += "v";
+		else
+			path += "w";
 
+		hour /= 2;
+		path += QStringLiteral( "%1" ).arg( hour, 2, 10, QLatin1Char( '0' ) );
+		path += ".png";
 
-	_timeImagePath = path.toStdString().c_str();
-	OnPropertyChanged( "TimeImagePath" );
+		const auto tmp = path.toStdString();
+		if ( tmp.compare( m_timeImagePath.Str() ) != 0 )
+		{
+			m_timeImagePath = tmp.c_str();
+			OnPropertyChanged( "TimeImagePath" );
+		}
+	}
 
 }
 
 void GameModel::setViewLevel( int level )
 {
-	_level = ( "Level: " + QString::number( level ) ).toStdString().c_str();
+	m_level = ( "Level: " + QString::number( level ) ).toStdString().c_str();
 	OnPropertyChanged( "Level" );
 }
 
-void GameModel::updatePause()
+void GameModel::updatePause( bool paused )
 {
-	OnPropertyChanged( "Paused" );
+	setPaused( paused );
 }
 
-void GameModel::updateGameSpeed()
+void GameModel::updateGameSpeed( GameSpeed speed )
 {
-	OnPropertyChanged( "NormalSpeed" );
-	OnPropertyChanged( "FastSpeed" );
+	setGameSpeed( speed );
+}
+
+void GameModel::updateRenderOptions( bool designation, bool jobs, bool walls, bool axles )
+{
+	setRenderDesignations( designation );
+	setRenderJobs( jobs );
+	setRenderWalls( walls );
+	setRenderAxles( axles );
 }
 
 void GameModel::onBuild()
@@ -451,32 +430,52 @@ void GameModel::onShowAgriculture( unsigned id )
 
 const char* GameModel::getYear() const
 {
-	return _year.Str();
+	return m_year.Str();
 }
 
 const char* GameModel::getDay() const
 {
-	return _day.Str();
+	return m_day.Str();
 }
 
 const char* GameModel::getTime() const
 {
-	return _time.Str();
+	return m_time.Str();
 }
 
 const char* GameModel::getLevel() const
 {
-	return _level.Str();
+	return m_level.Str();
 }
 
 const char* GameModel::getSun() const
 {
-	return _sun.Str();
+	return m_sun.Str();
+}
+	
+const char* GameModel::getKingdomName() const
+{
+	return m_kingdomName.Str();
+}
+
+const char* GameModel::getKingdomInfo1() const
+{
+	return m_kingdomInfo1.Str();
+}
+
+const char* GameModel::getKingdomInfo2() const
+{
+	return m_kingdomInfo2.Str();
+}
+
+const char* GameModel::getKingdomInfo3() const
+{
+	return m_kingdomInfo3.Str();
 }
 
 const char* GameModel::getTimeImagePath() const
 {
-	return _timeImagePath.Str();
+	return m_timeImagePath.Str();
 }
 
 const char* GameModel::showCommandButtons() const
@@ -705,14 +704,48 @@ void GameModel::setShowMilitary( bool value )
 	}
 }
 
+const char* GameModel::getShowInventory() const
+{
+	if ( m_shownInfo == ShownInfo::Inventory )
+	{
+		return "Visible";
+	}
+	return "Hidden";
+}
+
+void GameModel::setShowInventory( bool value )
+{
+	if( value )
+	{
+		if( m_shownInfo != ShownInfo::Inventory )
+		{
+			setShownInfo( ShownInfo::Inventory );
+		}
+	}
+	else
+	{
+		setShownInfo( ShownInfo::None );
+	}
+}
+
+
 
 void GameModel::setGameSpeed( GameSpeed value )
 {
-	if ( GameManager::getInstance().gameSpeed() != value )
+	if( m_showMessageWindow )
 	{
-		GameManager::getInstance().setGameSpeed( value );
+		m_proxy->setPaused( true );
 	}
-	GameManager::getInstance().setPaused( false );
+	else
+	{
+		if ( m_gameSpeed != value )
+		{
+			m_proxy->setGameSpeed( value );
+		}
+		m_proxy->setPaused( false );
+	}
+	m_gameSpeed = value;
+
 	OnPropertyChanged( "Paused" );
 	OnPropertyChanged( "NormalSpeed" );
 	OnPropertyChanged( "FastSpeed" );
@@ -720,23 +753,25 @@ void GameModel::setGameSpeed( GameSpeed value )
 
 bool GameModel::getPaused() const
 {
-	return GameManager::getInstance().paused();
+	return m_paused;
 }
 
 void GameModel::setPaused( bool value )
 {
-	if( value )
+	if( m_showMessageWindow && !value )
 	{
-		GameManager::getInstance().setPaused( value );
-		OnPropertyChanged( "Paused" );
-		OnPropertyChanged( "NormalSpeed" );
-		OnPropertyChanged( "FastSpeed" );
+		return;
 	}
+	m_paused = value;
+	m_proxy->setPaused( value );
+	OnPropertyChanged( "Paused" );
+	OnPropertyChanged( "NormalSpeed" );
+	OnPropertyChanged( "FastSpeed" );
 }
 
 bool GameModel::getNormalSpeed() const
 {
-	return ( GameManager::getInstance().gameSpeed() == GameSpeed::Normal && !GameManager::getInstance().paused() );
+	return ( m_gameSpeed == GameSpeed::Normal && !m_paused );
 }
 
 void GameModel::setNormalSpeed( bool value )
@@ -749,7 +784,7 @@ void GameModel::setNormalSpeed( bool value )
 
 bool GameModel::getFastSpeed() const
 {
-	return ( GameManager::getInstance().gameSpeed() == GameSpeed::Fast && !GameManager::getInstance().paused() );
+	return ( m_gameSpeed == GameSpeed::Fast && !m_paused );
 }
 
 void GameModel::setFastSpeed( bool value )
@@ -757,6 +792,59 @@ void GameModel::setFastSpeed( bool value )
 	if( value )
 	{
 		setGameSpeed( GameSpeed::Fast );
+	}
+}
+
+bool GameModel::getRenderDesignations() const
+{
+	return m_renderDesignations;
+}
+void GameModel::setRenderDesignations( bool value )
+{
+	if( m_renderDesignations != value )
+	{
+		m_renderDesignations = value;
+		m_proxy->setRenderOptions( m_renderDesignations, m_renderJobs, m_wallsLowered, m_renderAxles );
+		OnPropertyChanged( "RenderDesignations" );
+	}
+}
+bool GameModel::getRenderJobs() const
+{
+	return m_renderJobs;
+}
+void GameModel::setRenderJobs( bool value )
+{
+	if( m_renderJobs != value )
+	{
+		m_renderJobs = value;
+		m_proxy->setRenderOptions( m_renderDesignations, m_renderJobs, m_wallsLowered, m_renderAxles );
+		OnPropertyChanged( "RenderJobs" );
+	}
+}
+bool GameModel::getRenderWalls() const
+{
+	return m_wallsLowered;
+}
+void GameModel::setRenderWalls( bool value )
+{
+	if( m_wallsLowered != value )
+	{
+		m_wallsLowered = value;
+		m_proxy->setRenderOptions( m_renderDesignations, m_renderJobs, m_wallsLowered, m_renderAxles );
+		OnPropertyChanged( "RenderWalls" );
+	}
+}
+bool GameModel::getRenderAxles() const
+{
+	return m_renderAxles;
+}
+void GameModel::setRenderAxles( bool value )
+{
+	if( m_renderAxles != value )
+	{
+		m_renderAxles = value;
+		m_proxy->setRenderOptions( m_renderDesignations, m_renderJobs, m_wallsLowered, m_renderAxles );
+		OnPropertyChanged( "RenderWalls" );
 	}
 }
 
@@ -768,117 +856,16 @@ void GameModel::OnCmdCategory( BaseComponent* param )
 void GameModel::setCategory( const char* cats )
 {
 	QString cat( cats );
+	m_proxy->requestBuildItems( m_buildSelection, cat );
+}
+
+void GameModel::updateBuildItems( const QList<GuiBuildItem>& items )
+{
 	_buildItems->Clear();
 
-	switch ( m_buildSelection )
+	for( const auto& item : items )
 	{
-		case BuildSelection::Wall:
-		{
-			auto rows = DB::selectRows( "Constructions", "Category", cat );
-			for ( auto row : rows )
-			{
-				if ( row.value( "Type" ).toString() == "Wall" )
-				{
-					_buildItems->Add( MakePtr<BuildItem>( S::s( "$ConstructionName_" + row.value( "ID" ).toString() ), row.value( "ID" ).toString(), BuildItemType::Terrain ) );
-				}
-			}
-			break;
-		}
-		case BuildSelection::Floor:
-		{
-			auto rows = DB::selectRows( "Constructions", "Category", cat );
-			for ( auto row : rows )
-			{
-				if ( row.value( "Type" ).toString() == "Floor" )
-				{
-					_buildItems->Add( MakePtr<BuildItem>( S::s( "$ConstructionName_" + row.value( "ID" ).toString() ), row.value( "ID" ).toString(), BuildItemType::Terrain ) );
-				}
-			}
-			break;
-		}
-		case BuildSelection::Stairs:
-		{
-			auto rows = DB::selectRows( "Constructions", "Category", cat );
-			for ( auto row : rows )
-			{
-				if ( row.value( "Type" ).toString() == "Stairs" )
-				{
-					_buildItems->Add( MakePtr<BuildItem>( S::s( "$ConstructionName_" + row.value( "ID" ).toString() ), row.value( "ID" ).toString(), BuildItemType::Terrain ) );
-				}
-			}
-			break;
-		}
-		case BuildSelection::Ramps:
-		{
-			auto rows = DB::selectRows( "Constructions", "Category", cat );
-			for ( auto row : rows )
-			{
-				if ( row.value( "Type" ).toString() == "Ramp" )
-				{
-					_buildItems->Add( MakePtr<BuildItem>( S::s( "$ConstructionName_" + row.value( "ID" ).toString() ), row.value( "ID" ).toString(), BuildItemType::Terrain ) );
-				}
-			}
-			break;
-		}
-		case BuildSelection::Fence:
-		{
-			auto rows = DB::selectRows( "Constructions", "Category", cat );
-			for ( auto row : rows )
-			{
-				if ( row.value( "Type" ).toString() == "Fence" )
-				{
-					_buildItems->Add( MakePtr<BuildItem>( S::s( "$ConstructionName_" + row.value( "ID" ).toString() ), row.value( "ID" ).toString(), BuildItemType::Terrain ) );
-				}
-			}
-			break;
-		}
-		case BuildSelection::Workshop:
-		{
-			auto rows = DB::selectRows( "Workshops", "Tab", cat );
-
-			for ( auto row : rows )
-			{
-				_buildItems->Add( MakePtr<BuildItem>( S::s( "$WorkshopName_" + row.value( "ID" ).toString() ), row.value( "ID" ).toString(), BuildItemType::Workshop ) );
-			}
-			break;
-		}
-		case BuildSelection::Containers:
-		{
-			auto rows = DB::selectRows( "Containers" );
-			for ( auto row : rows )
-			{
-				if ( row.value( "Buildable" ).toBool() )
-				{
-					_buildItems->Add( MakePtr<BuildItem>( S::s( "$ItemName_" + row.value( "ID" ).toString() ), row.value( "ID" ).toString(), BuildItemType::Item ) );
-				}
-			}
-			break;
-		}
-		case BuildSelection::Furniture:
-		{
-			auto rows = DB::selectRows( "Items", "Category", "Furniture" );
-			for ( auto row : rows )
-			{
-				if ( row.value( "ItemGroup" ).toString() == cat )
-				{
-					_buildItems->Add( MakePtr<BuildItem>( S::s( "$ItemName_" + row.value( "ID" ).toString() ), row.value( "ID" ).toString(), BuildItemType::Item ) );
-				}
-			}
-			break;
-		}
-		case BuildSelection::Utility:
-		{
-			qDebug() << cat;
-			auto rows = DB::selectRows( "Items", "Category", "Utility" );
-			for ( auto row : rows )
-			{
-				if ( row.value( "ItemGroup" ).toString() == cat )
-				{
-					_buildItems->Add( MakePtr<BuildItem>( S::s( "$ItemName_" + row.value( "ID" ).toString() ), row.value( "ID" ).toString(), BuildItemType::Item ) );
-				}
-			}
-			break;
-		}
+		_buildItems->Add( MakePtr<BuildItem>( item, m_proxy ) );
 	}
 
 	OnPropertyChanged( "BuildItems" );
@@ -887,7 +874,6 @@ void GameModel::setCategory( const char* cats )
 void GameModel::OnCmdButtonCommand( BaseComponent* param )
 {
 	QString cmd( param->ToString().Str() );
-	qDebug() << cmd;
 
 	switch ( m_selectedButtons )
 	{
@@ -1025,11 +1011,6 @@ const NoesisApp::DelegateCommand* GameModel::GetCmdCategory() const
 	return &_cmdCategory;
 }
 
-const NoesisApp::DelegateCommand* GameModel::GetCmdBack() const
-{
-	return &_cmdBack;
-}
-
 const NoesisApp::DelegateCommand* GameModel::GetSimpleCommand() const
 {
 	return &_cmdSimple;
@@ -1068,7 +1049,7 @@ void GameModel::OnCmdBack( BaseComponent* param )
 		return;
 	}
 
-	EventConnector::getInstance().onKeyEsc();
+	m_proxy->propagateEscape();
 }
 
 void GameModel::CmdRightCommandButton( BaseComponent* param )
@@ -1087,6 +1068,11 @@ void GameModel::CmdRightCommandButton( BaseComponent* param )
 	{
 		setShowMilitary( true );
 		m_proxy->requestMilitaryUpdate();
+	}
+	else if ( cmd == "Inventory" )
+	{
+		setShowInventory( true );
+		m_proxy->requestInventoryUpdate();
 	}
 	else if ( cmd == "Missions" )
 	{
@@ -1160,11 +1146,14 @@ void GameModel::CmdLeftCommandButton( BaseComponent* param )
 			_commandButtons->Add( MakePtr<CommandButton>( "Remove plant", "RemovePlant" ) );
 			break;
 		case ButtonSelection::Designation:
+			_commandButtons->Add( MakePtr<CommandButton>( "Stockpile", "CreateStockpile" ) );
 			_commandButtons->Add( MakePtr<CommandButton>( "Farm", "CreateFarm" ) );
 			_commandButtons->Add( MakePtr<CommandButton>( "Grove", "CreateGrove" ) );
 			_commandButtons->Add( MakePtr<CommandButton>( "Pasture", "CreatePasture" ) );
-			_commandButtons->Add( MakePtr<CommandButton>( "Room", "CreateRoom" ) );
-			_commandButtons->Add( MakePtr<CommandButton>( "Stockpile", "CreateStockpile" ) );
+			_commandButtons->Add( MakePtr<CommandButton>( "Personal Room", "CreateRoom" ) );
+			_commandButtons->Add( MakePtr<CommandButton>( "Dormitory", "CreateDorm" ) );
+			_commandButtons->Add( MakePtr<CommandButton>( "Dining Hall", "CreateDining" ) );
+			_commandButtons->Add( MakePtr<CommandButton>( "Hospital", "CreateHospital" ) );
 			_commandButtons->Add( MakePtr<CommandButton>( "Forbidden", "CreateNoPass" ) );
 			_commandButtons->Add( MakePtr<CommandButton>( "Guard", "CreateGuardArea" ) );
 			_commandButtons->Add( MakePtr<CommandButton>( "Remove", "RemoveDesignation" ) );
@@ -1200,7 +1189,10 @@ const NoesisApp::DelegateCommand* GameModel::GetCmdRightCommandButton() const
 
 void GameModel::OnCmdSimple( BaseComponent* param )
 {
-	Selection::getInstance().setAction( param->ToString().Str() );
+	if( param )
+	{
+		m_proxy->setSelectionAction( param->ToString().Str() );
+	}
 }
 
 void GameModel::onCloseWindowCmd( BaseComponent* param )
@@ -1245,6 +1237,7 @@ void GameModel::setShownInfo( ShownInfo info )
 	OnPropertyChanged( "ShowDebug" );
 	OnPropertyChanged( "ShowNeighbors" );
 	OnPropertyChanged( "ShowMilitary" );
+	OnPropertyChanged( "ShowInventory" );
 	
 	OnPropertyChanged( "ShowMessage" );
 }
@@ -1302,11 +1295,8 @@ void GameModel::onMessageButtonCmd( BaseComponent* param )
 			auto gme = m_messageQueue.takeFirst();
 			eventMessage( gme.id, gme.title, gme.msg, gme.pause, gme.yesno );
 		}
-		else
-		{
-			OnPropertyChanged( "ShowMessage" );
-		}
 	}
+	OnPropertyChanged( "ShowMessage" );
 }
 
 void GameModel::eventMessage( unsigned int id, QString title, QString msg, bool pause, bool yesno )
@@ -1339,6 +1329,39 @@ void GameModel::eventMessage( unsigned int id, QString title, QString msg, bool 
 	}
 }
 
+const char* GameModel::getShowSelection() const
+{
+	if ( m_showSelection )
+	{
+		return "Visible";
+	}
+	return "Hidden";
+}
+	
+void GameModel::setShowSelection( bool value )
+{
+	if( m_showSelection != value )
+	{
+		m_showSelection = value;
+		OnPropertyChanged( "ShowSelection" );
+	}
+}
+
+void GameModel::updateWatchList( const QList<GuiWatchedItem>& list )
+{
+	m_watchList->Clear();
+	for( const auto& item : list )
+	{
+		m_watchList->Add( MakePtr<GameItem>( item.guiString, "" ) );
+	}
+	OnPropertyChanged( "WatchList" );
+}
+
+Noesis::ObservableCollection<GameItem>* GameModel::GetWatchList() const
+{
+	return m_watchList;
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 NS_BEGIN_COLD_REGION
 
@@ -1355,10 +1378,19 @@ NS_IMPLEMENT_REFLECTION( GameModel, "IngnomiaGUI.GameModel" )
 	NsProp( "Sun", &GameModel::getSun );
 	NsProp( "TimeImagePath", &GameModel::getTimeImagePath );
 
+	NsProp( "KingdomName", &GameModel::getKingdomName );
+	NsProp( "KingdomInfo1", &GameModel::getKingdomInfo1 );
+	NsProp( "KingdomInfo2", &GameModel::getKingdomInfo2 );
+	NsProp( "KingdomInfo3", &GameModel::getKingdomInfo3 );
+
+	NsProp( "RenderDesignations", &GameModel::getRenderDesignations, &GameModel::setRenderDesignations );
+	NsProp( "RenderJobs", &GameModel::getRenderJobs, &GameModel::setRenderJobs );
+	NsProp( "RenderWalls", &GameModel::getRenderWalls, &GameModel::setRenderWalls );
+	NsProp( "RenderAxles", &GameModel::getRenderAxles, &GameModel::setRenderAxles );
+
 	NsProp( "CmdButtonCommand", &GameModel::GetCmdButtonCommand );
 	NsProp( "CmdCategory", &GameModel::GetCmdCategory );
 
-	NsProp( "CmdBack", &GameModel::GetCmdBack );
 	NsProp( "CmdSimple", &GameModel::GetSimpleCommand );
 
 	NsProp( "CmdLeftCommandButton", &GameModel::GetCmdLeftCommandButton );
@@ -1379,6 +1411,8 @@ NS_IMPLEMENT_REFLECTION( GameModel, "IngnomiaGUI.GameModel" )
 	NsProp( "ShowCreatureInfo", &GameModel::getShowCreatureInfo );
 	NsProp( "ShowNeighbors", &GameModel::getShowNeighbors );
 	NsProp( "ShowMilitary", &GameModel::getShowMilitary );
+	NsProp( "ShowInventory", &GameModel::getShowInventory );
+	NsProp( "ShowSelection", &GameModel::getShowSelection );
 	
 	NsProp( "ShowMessage", &GameModel::getShowMessage );
 	NsProp( "ShowMessageButtonOk", &GameModel::getShowMessageButtonOk );
@@ -1389,6 +1423,9 @@ NS_IMPLEMENT_REFLECTION( GameModel, "IngnomiaGUI.GameModel" )
 
 	NsProp( "CloseWindowCmd", &GameModel::GetCloseWindowCmd );
 	NsProp( "OpenCreatureDetailsCmd", &GameModel::GetOpenGnomeDetailsCmd );
+
+	NsProp( "WatchList", &GameModel::GetWatchList );
+
 }
 
 NS_IMPLEMENT_REFLECTION( CommandButton )
@@ -1409,6 +1446,8 @@ NS_IMPLEMENT_REFLECTION( BuildItem )
 	NsProp( "Name", &BuildItem::GetName );
 	NsProp( "RequiredItems", &BuildItem::requiredItems );
 	NsProp( "Build", &BuildItem::GetCmdBuild );
+	NsProp( "ShowReplaceButton", &BuildItem::GetShowReplaceButton );
+	NsProp( "ShowFillHoleButton", &BuildItem::GetShowFillHoleButton );
 	NsProp( "Image", &BuildItem::getBitmapSource );
 }
 

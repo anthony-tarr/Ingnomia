@@ -1,37 +1,39 @@
 #version 430 core
 
-#define TF_NONE                 0x00000000
-#define TF_WALKABLE             0x00000001
-#define TF_UNDISCOVERED         0x00000002
-#define TF_SUNLIGHT             0x00000004
-#define TF_WET                  0x00000008
-#define TF_GRASS                0x00000010
-#define TF_NOPASS               0x00000020
-#define TF_BLOCKED              0x00000040
-#define TF_DOOR                 0x00000080
-#define TF_STOCKPILE            0x00000100
-#define TF_GROVE                0x00000200
-#define TF_FARM                 0x00000400
-#define TF_TILLED               0x00000800
-#define TF_WORKSHOP             0x00001000
-#define TF_ROOM                 0x00002000
-#define TF_LAVA                 0x00004000
-#define TF_WATER                0x00008000
-#define TF_JOB_FLOOR            0x00010000
-#define TF_JOB_WALL             0x00020000
-#define TF_JOB_BUSY_FLOOR       0x00040000
-#define TF_JOB_BUSY_WALL        0x00080000
-#define TF_MOUSEOVER            0x00100000
-#define TF_WALKABLEANIMALS      0x00200000
-#define TF_WALKABLEMONSTERS     0x00400000
-#define TF_PASTURE              0x00800000
-#define TF_INDIRECT_SUNLIGHT    0x01000000
+#define TF_NONE                 0x00000000u
+#define TF_WALKABLE             0x00000001u
+#define TF_UNDISCOVERED         0x00000002u
+#define TF_SUNLIGHT             0x00000004u
+#define TF_WET                  0x00000008u
+#define TF_GRASS                0x00000010u
+#define TF_NOPASS               0x00000020u
+#define TF_BLOCKED              0x00000040u
+#define TF_DOOR                 0x00000080u
+#define TF_STOCKPILE            0x00000100u
+#define TF_GROVE                0x00000200u
+#define TF_FARM                 0x00000400u
+#define TF_TILLED               0x00000800u
+#define TF_WORKSHOP             0x00001000u
+#define TF_ROOM                 0x00002000u
+#define TF_LAVA                 0x00004000u
+#define TF_WATER                0x00008000u
+#define TF_JOB_FLOOR            0x00010000u
+#define TF_JOB_WALL             0x00020000u
+#define TF_JOB_BUSY_FLOOR       0x00040000u
+#define TF_JOB_BUSY_WALL        0x00080000u
+#define TF_MOUSEOVER            0x00100000u
+#define TF_WALKABLEANIMALS      0x00200000u
+#define TF_WALKABLEMONSTERS     0x00400000u
+#define TF_PASTURE              0x00800000u
+#define TF_INDIRECT_SUNLIGHT    0x01000000u
+#define TF_TRANSPARENT          0x40000000u
+#define TF_OVERSIZE             0x80000000u
 
-#define WATER_TOP               0x01
-#define WATER_EDGE              0x02
-#define WATER_WALL              0x10
-#define WATER_FLOOR             0x20
-#define WATER_ONFLOOR           0x40
+#define WATER_TOP               0x01u
+#define WATER_EDGE              0x02u
+#define WATER_WALL              0x10u
+#define WATER_FLOOR             0x20u
+#define WATER_ONFLOOR           0x40u
 
 layout(location = 0) in vec3 aPos;
 
@@ -74,10 +76,6 @@ layout(std430, binding = 0) readonly restrict buffer tileData1
 } tileData;
 
 uniform bool uWallsLowered;
-
-uniform bool uPaintSolid;
-uniform bool uPaintCreatures;
-uniform bool uPaintWater;
 uniform bool uPaintFrontToBack;
 
 uvec3 rotate(uvec3 pos)
@@ -138,6 +136,8 @@ void main()
 {
 	uint id = gl_InstanceID;
 
+	const bool uIsWall = aPos.z != 0;
+
 	// Min and max are inclusive in volume
 	const uvec3 renderVolume = uRenderMax - uRenderMin + uvec3(1, 1, 1);
 
@@ -172,18 +172,25 @@ void main()
 	uint itemSprite = 0;
 	uint jobFloorSprite = 0;
 	uint jobWallSprite = 0;
-	if(uPaintSolid)
+	uint creatureSprite = 0;
+	// Render in first pass if no transparency effects, and in second pass otherwise
+	bool containsTransparency;
+	if( uIsWall )
+	{
+		containsTransparency = ( vFlags & TF_TRANSPARENT ) != 0 || ( tileData.data[index].packedLevels & 0xff ) >= 3;
+	}
+	else
+	{
+		containsTransparency = ( vFlags & TF_TRANSPARENT ) != 0 || ( tileData.data[index].packedLevels & 0xff ) != 0;
+	}
+	const bool renderingEnabled = uPaintFrontToBack ^^ containsTransparency;
+	if( renderingEnabled )
 	{
 		floorSprite = tileData.data[index].floorSpriteUID;
 		wallSprite = tileData.data[index].wallSpriteUID;
 		itemSprite = tileData.data[index].itemSpriteUID;
 		jobFloorSprite = tileData.data[index].jobSpriteFloorUID;
 		jobWallSprite = tileData.data[index].jobSpriteWallUID;
-	}
-
-	uint creatureSprite = 0;
-	if(uPaintCreatures)
-	{
 		creatureSprite = tileData.data[index].creatureSpriteUID;
 	}
 	
@@ -195,7 +202,7 @@ void main()
 	uint vFluidLevelPacked1 = 0;
 	uint vFluidFlags = 0;
 
-	if(uPaintWater)
+	if( !uPaintFrontToBack )
 	{
 		const uvec3 above = uvec3(tile.xy, tile.z + 1);
 		const uvec3 offsetLeft = rotateOffset( uvec3( 0, 1, 0 ) );
@@ -251,13 +258,6 @@ void main()
 		vFluidLevelPacked1 = (vFluidLevel << 0) | (vFluidLevelLeft << 8) | (vFluidLevelRight << 16) | (vFluidFlags << 24);
 	}
 
-	const bool uIsWall = aPos.z != 0;
-
-	vTexCoords = vec2( aPos.x, 1.0 - aPos.y );
-	block1 = uvec4(floorSprite, jobFloorSprite, wallSprite, jobWallSprite);
-	block2 = uvec4(itemSprite, creatureSprite, vFluidLevelPacked1, uIsWall);
-	block3 = uvec4(vFlags, vFlags2, vLightLevel, vVegetationLevel);
-
 	// Check if rendering is applicable at all for the current tile and rendering pass...
 	if(
 		((vFlags & TF_UNDISCOVERED) != 0 && uWallsLowered)
@@ -282,7 +282,24 @@ void main()
 	}
 	else
 	{
-		vec3 worldPos = project( rotate( tile ), aPos.xy, uIsWall );
+		vec2 vVertexCoords;
+		if( ( vFlags & TF_OVERSIZE ) != 0 )
+		{
+			// Round to full sprite extent, for sprites which are not adhering to regular tile bounding boxes
+			vVertexCoords.x = floor(aPos.x + 0.5);
+			vVertexCoords.y = floor(aPos.y + 0.5);
+		}
+		else
+		{
+			vVertexCoords = aPos.xy;
+		}
+
+		vTexCoords = vec2( vVertexCoords.x, 1.0 - vVertexCoords.y );
+		block1 = uvec4(floorSprite, jobFloorSprite, wallSprite, jobWallSprite);
+		block2 = uvec4(itemSprite, creatureSprite, vFluidLevelPacked1, uIsWall);
+		block3 = uvec4(vFlags, vFlags2, vLightLevel, vVegetationLevel);
+
+		vec3 worldPos = project( rotate( tile ), vVertexCoords.xy, uIsWall );
 		gl_Position = uTransform * vec4( worldPos, 1.0 );
 	}
 }

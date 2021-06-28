@@ -24,8 +24,8 @@
 class CanWork : public Creature
 {
 public:
-	CanWork( Position& pos, QString name, Gender gender, QString species );
-	CanWork( QVariantMap in );
+	CanWork( Position& pos, QString name, Gender gender, QString species, Game* game );
+	CanWork( QVariantMap in, Game* game );
 	~CanWork() {};
 
 	virtual void serialize( QVariantMap& out );
@@ -58,19 +58,19 @@ protected:
 	unsigned int m_trainingGround = 0;
 	////////////////////////////////////////////////////////////////////////////
 
-	Job* m_job        = nullptr;
+	QSharedPointer<Job> m_job;
 	bool m_jobChanged = false;
 
 	void resetJobVars();
 	void cleanUpJob( bool finished );
 
-	int getDurationTicks( QVariant value, Job* job );
+	int getDurationTicks( QVariant value, QSharedPointer<Job> job );
 
 	bool dropEquippedItem();
 	void equipHand( unsigned int item, QString side );
 
-	void gainTech( QVariant techGain, Job* job );
-	void gainSkill( QVariant skillGain, Job* job );
+	void gainTech( QVariant techGain, QSharedPointer<Job> job );
+	void gainSkill( QVariant skillGain, QSharedPointer<Job> job );
 	void gainSkill( QString skill, int value );
 	double parseValue( QVariant v );
 	double parseGain( QVariantMap gainMap );

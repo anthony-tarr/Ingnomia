@@ -62,10 +62,10 @@ public:
 
 	QString getID() { return m_idString.Str(); }
 
-	bool getIgnore() const { return m_attitude == MilAttitude::_IGNORE; }
-	void setIgnore( bool value );
-	bool getAvoid() const { return m_attitude == MilAttitude::AVOID; }
-	void setAvoid( bool value );
+	bool getDefend() const { return m_attitude == MilAttitude::DEFEND; }
+	void setDefend( bool value );
+	bool getFlee() const { return m_attitude == MilAttitude::FLEE; }
+	void setFlee( bool value );
 	bool getAttack() const { return m_attitude == MilAttitude::ATTACK; }
 	void setAttack( bool value );
 	bool getHunt() const { return m_attitude == MilAttitude::HUNT; }
@@ -74,7 +74,7 @@ public:
 private:
 	Noesis::String m_idString;
 	Noesis::String m_name;
-	MilAttitude m_attitude = MilAttitude::_IGNORE;
+	MilAttitude m_attitude = MilAttitude::FLEE;
 
 	unsigned int m_squadID = 0;
 	MilitaryProxy* m_proxy = nullptr;
@@ -271,6 +271,9 @@ public:
 	unsigned int getID() { return m_id; }
 	void updatePossibleMaterials( QString slot, QStringList mats );
 
+	bool GetCivilian() const;
+	void SetCivilian( bool value );
+
 private:
 	unsigned int m_id = 0;
 	Noesis::String m_idString;
@@ -281,6 +284,8 @@ private:
 	bool m_showRightArrow = false;
 
 	bool m_showConfig = false;
+
+	bool m_civilian = false;
 
 	const char* getShowLeftArrow() const { return m_showLeftArrow ? "Visible" : "Hidden"; }
 	const char* getShowRightArrow() const { return m_showRightArrow ? "Visible" : "Hidden"; }

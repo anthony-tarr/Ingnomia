@@ -20,6 +20,7 @@
 #include "../base/gamestate.h"
 #include "../base/global.h"
 #include "../base/util.h"
+#include "../game/game.h"
 #include "../game/creaturemanager.h"
 #include "../game/farmingmanager.h"
 #include "../game/fluidmanager.h"
@@ -40,31 +41,18 @@ const int ROT_BIT  = 65536;
 const int ANIM_BIT = 262144;
 const int WALL_BIT = 524288;
 
-bool World::constructWorkshop( QString constructionSID, Position pos, int rotation, QList<unsigned int> itemUIDs, Position extractTo )
-{
-	if ( itemUIDs.empty() )
-	{
-		qDebug() << "World::constructWorkshop() - source item list is empty!";
-		return false;
-	}
-	//qDebug() << "world::constructWorkshop() " << constructionSID << pos.toString() << rotation;
-	QVariantMap con = DB::selectRow( "Workshops", constructionSID );
-
-	constructWorkshop( con, pos, rotation, Util::uintList2Variant( itemUIDs ), extractTo );
-	return true;
-}
-
 bool World::construct( QString constructionSID, Position pos, int rotation, QList<unsigned int> itemIDs, Position extractTo )
 {
 	if ( itemIDs.empty() )
 	{
-		qDebug() << "World::construct() - source item list is empty!";
+		//qDebug() << "World::construct() - source item list is empty!";
 		return false;
 	}
 
 	//qDebug() << "world::construct() " << constructionSID << pos.toString() << rotation;
 	QVariantMap con = DB::selectRow( "Constructions", constructionSID );
 	QString type    = con.value( "Type" ).toString();
+	
 	int typeNum     = m_constructionSID2ENUM.value( type );
 
 	QStringList materialSIDs;
@@ -72,15 +60,15 @@ bool World::construct( QString constructionSID, Position pos, int rotation, QLis
 	QVariantList itemUIDs;
 	for ( auto vItem : itemIDs )
 	{
-		if ( Global::inv().itemExists( vItem ) )
+		if ( g->inv()->itemExists( vItem ) )
 		{
-			materialSIDs.append( Global::inv().materialSID( vItem ) );
-			materialUIDs.append( Global::inv().materialUID( vItem ) );
-			itemUIDs.append( Global::inv().itemUID( vItem ) );
+			materialSIDs.append( g->inv()->materialSID( vItem ) );
+			materialUIDs.append( g->inv()->materialUID( vItem ) );
+			itemUIDs.append( g->inv()->itemUID( vItem ) );
 		}
 		else
 		{
-			qDebug() << "Souce item no longer exists!" << vItem;
+			//qDebug() << "Source item no longer exists!" << vItem;
 			return false;
 		}
 	}
@@ -113,9 +101,6 @@ bool World::construct( QString constructionSID, Position pos, int rotation, QLis
 		case CID_RAMPCORNER:
 			return constructRampCorner( con, pos, rotation, itemUIDs, materialUIDs, materialSIDs, extractTo );
 			break;
-		case CID_SCAFFOLD:
-			return constructScaffold( con, pos, rotation, itemUIDs, materialUIDs, materialSIDs, extractTo );
-			break;
 		case CID_WALLFLOOR:
 			return constructWallFloor( con, pos, rotation, itemUIDs, materialUIDs, materialSIDs, extractTo );
 	}
@@ -140,8 +125,8 @@ bool World::constructWall( QVariantMap& con, Position pos, int rotation, QVarian
 		if ( tile.wallType & WallType::WT_ROUGH )
 		{
 			auto mats = mineWall( pos, extractTo );
-			Util::createRawMaterialItem( extractTo, mats.first );
-			Util::createRawMaterialItem( extractTo, mats.second );
+			Global::util->createRawMaterialItem( extractTo, mats.first );
+			Global::util->createRawMaterialItem( extractTo, mats.second );
 		}
 		if ( m_wallConstructions.contains( pos.toInt() ) )
 		{
@@ -149,7 +134,7 @@ bool World::constructWall( QVariantMap& con, Position pos, int rotation, QVarian
 		}
 
 		QString spriteSID      = spMap.value( "SpriteID" ).toString();
-		unsigned int spriteUID = Global::sf().createSprite( spriteSID, materialSIDs )->uID;
+		unsigned int spriteUID = g->sf()->createSprite( spriteSID, materialSIDs )->uID;
 		tile.wallSpriteUID     = spriteUID;
 
 		if ( con.value( "NoConstruction" ).toBool() )
@@ -174,8 +159,6 @@ bool World::constructWall( QVariantMap& con, Position pos, int rotation, QVarian
 		{
 			updateLightsInRange( constrPos );
 		}
-
-		//GameState::addChange( NetworkCommand::SETTILEFLAGS, { QString::number( tid ), Util::tile2String( tile ) } );
 		updateCoords.push_back( constrPos );
 	}
 
@@ -221,7 +204,7 @@ bool World::constructFloor( QVariantMap& con, Position pos, int rotation, QVaria
 		{
 			auto mat = floorMaterial( constrPos );
 			//auto mats = removeFloor( pos, extractTo );
-			Util::createRawMaterialItem( extractTo, mat );
+			Global::util->createRawMaterialItem( extractTo, mat );
 		}
 		if ( m_floorConstructions.contains( pos.toInt() ) )
 		{
@@ -231,7 +214,7 @@ bool World::constructFloor( QVariantMap& con, Position pos, int rotation, QVaria
 		}
 
 		QString spriteSID      = spMap.value( "SpriteID" ).toString();
-		unsigned int spriteUID = Global::sf().createSprite( spriteSID, materialSIDs )->uID;
+		unsigned int spriteUID = g->sf()->createSprite( spriteSID, materialSIDs )->uID;
 
 		tile.floorSpriteUID = spriteUID;
 		if ( con.value( "NoConstruction" ).toBool() )
@@ -270,8 +253,6 @@ bool World::constructFloor( QVariantMap& con, Position pos, int rotation, QVaria
 				--z;
 			}
 		}
-
-		//GameState::addChange( NetworkCommand::SETTILEFLAGS, { QString::number( tid ), Util::tile2String( tile ) } );
 		updateCoords.push_back( constrPos );
 	}
 
@@ -337,8 +318,6 @@ bool World::constructFence( QVariantMap& con, Position pos, int rotation, QVaria
 			tile.wallRotation = 0;
 			clearTileFlag( constrPos, TileFlag::TF_WALKABLE );
 		}
-
-		GameState::addChange( NetworkCommand::SETTILEFLAGS, { QString::number( tid ), Util::tile2String( tile ) } );
 		updateCoords.push_back( constrPos );
 	}
 
@@ -381,7 +360,7 @@ bool World::constructPipe( QString itemSID, Position pos, unsigned int itemUID )
 
 	setTileFlag( pos, TileFlag::TF_PIPE );
 	Tile& tile        = getTile( pos );
-	tile.wallMaterial = Global::inv().materialUID( itemUID );
+	tile.wallMaterial = g->inv()->materialUID( itemUID );
 	tile.wallType     = WT_CONSTRUCTED;
 
 	updatePipeSprite( pos );
@@ -392,16 +371,15 @@ bool World::constructPipe( QString itemSID, Position pos, unsigned int itemUID )
 
 	if ( itemSID == "Pipe" )
 	{
-		Global::flm().addPipe( pos, itemUID );
+		g->flm()->addPipe( pos, itemUID );
 	}
 	else if ( itemSID == "PipeExit" )
 	{
-		Global::flm().addOutput( pos, itemUID );
+		g->flm()->addOutput( pos, itemUID );
 	}
 	else if ( itemSID == "Pump" )
 	{
-		Global::flm().addInput( pos, itemUID );
-		Global::mcm().installItem( itemUID, pos, 0 );
+		g->mcm()->installItem( itemUID, pos, 0 );
 	}
 
 	return true;
@@ -420,16 +398,16 @@ bool World::deconstructPipe( QVariantMap constr, Position decPos, Position workP
 	updatePipeSprite( decPos.westOf() );
 
 	unsigned itemID = constr.value( "Item" ).toUInt();
-	Global::inv().setConstructedOrEquipped( itemID, false );
-	Global::inv().moveItemToPos( itemID, workPos );
+	g->inv()->setConstructed( itemID, false );
+	g->inv()->moveItemToPos( itemID, workPos );
 
-	QString itemSID = Global::inv().itemSID( constr.value( "Item" ).toUInt() );
+	QString itemSID = g->inv()->itemSID( constr.value( "Item" ).toUInt() );
 
-	Global::flm().removeAt( decPos );
+	g->flm()->removeAt( decPos );
 
 	if ( itemSID == "Pump" )
 	{
-		Global::mcm().uninstallItem( constr.value( "Item" ).toUInt() );
+		g->mcm()->uninstallItem( constr.value( "Item" ).toUInt() );
 	}
 
 	return true;
@@ -451,7 +429,7 @@ bool World::constructWallFloor( QVariantMap& con, Position pos, int rotation, QV
 		Tile& tile = getTile( constrPos );
 
 		QString spriteSID      = spMap.value( "SpriteID" ).toString();
-		unsigned int spriteUID = Global::sf().createSprite( spriteSID, materialSIDs )->uID;
+		unsigned int spriteUID = g->sf()->createSprite( spriteSID, materialSIDs )->uID;
 
 		if ( spMap.value( "Type" ).toString() == "Wall" )
 		{
@@ -517,8 +495,6 @@ bool World::constructWallFloor( QVariantMap& con, Position pos, int rotation, QV
 				}
 			}
 		}
-
-		//GameState::addChange( NetworkCommand::SETTILEFLAGS, { QString::number( tid ), Util::tile2String( tile ) } );
 		updateCoords.push_back( constrPos );
 	}
 
@@ -569,7 +545,7 @@ bool World::constructStairs( QVariantMap& con, Position pos, int rotation, QVari
 		{
 			type                   = sp.value( "Type" ).toString();
 			QString spriteSID      = sp.value( "SpriteID" ).toString();
-			unsigned int spriteUID = Global::sf().createSprite( spriteSID, materialSIDs )->uID;
+			unsigned int spriteUID = g->sf()->createSprite( spriteSID, materialSIDs )->uID;
 
 			if ( type == "StairsBottom" )
 			{
@@ -599,13 +575,12 @@ bool World::constructStairs( QVariantMap& con, Position pos, int rotation, QVari
 				positions.append( "F" );
 				positions.append( constrPos.toString() );
 			}
-
-			GameState::addChange( NetworkCommand::SETTILEFLAGS, { QString::number( tid ), Util::tile2String( tile ) } );
 			updateCoords.push_back( constrPos );
 		}
 	}
 
 	QVariantMap constr;
+	constr.insert( "ConstructionID", con.value("ID") );
 	constr.insert( "Pos", pos.toString() );
 	constr.insert( "Positions", positions );
 	constr.insert( "Items", itemUIDs );
@@ -637,7 +612,7 @@ bool World::constructRamp( QVariantMap& con, Position pos, int rotation, QVarian
 	QVariantList positions;
 	QString type;
 	/*
-	if( Util::materialType( materialSIDs.first() ) == "Soil" || Util::materialType( materialSIDs.first() ) == "Stone" )
+	if( Global::util->materialType( materialSIDs.first() ) == "Soil" || Global::util->materialType( materialSIDs.first() ) == "Stone" )
 	{
 		createRamp( pos, materialSIDs.first() );
 		updateCoords.append( pos );
@@ -657,13 +632,13 @@ bool World::constructRamp( QVariantMap& con, Position pos, int rotation, QVarian
 		{
 			type                   = sp.value( "Type" ).toString();
 			QString spriteSID      = sp.value( "SpriteID" ).toString();
-			unsigned int spriteUID = Global::sf().createSprite( spriteSID, materialSIDs )->uID;
+			unsigned int spriteUID = g->sf()->createSprite( spriteSID, materialSIDs )->uID;
 			removeGrass( constrPos );
 
 			if ( type == "RampBottom" )
 			{
 				tile.wallSpriteUID = spriteUID;
-				if ( Util::materialType( materialSIDs.first() ) == "Soil" || Util::materialType( materialSIDs.first() ) == "Stone" )
+				if ( Global::util->materialType( materialSIDs.first() ) == "Soil" || Global::util->materialType( materialSIDs.first() ) == "Stone" )
 				{
 					tile.wallType = ( WallType )( WallType::WT_RAMP );
 				}
@@ -680,7 +655,7 @@ bool World::constructRamp( QVariantMap& con, Position pos, int rotation, QVarian
 			if ( type == "RampTop" )
 			{
 				tile.floorSpriteUID = spriteUID;
-				if ( Util::materialType( materialSIDs.first() ) == "Soil" || Util::materialType( materialSIDs.first() ) == "Stone" )
+				if ( Global::util->materialType( materialSIDs.first() ) == "Soil" || Global::util->materialType( materialSIDs.first() ) == "Stone" )
 				{
 					tile.floorType = ( FloorType )( FloorType::FT_RAMPTOP );
 				}
@@ -701,13 +676,11 @@ bool World::constructRamp( QVariantMap& con, Position pos, int rotation, QVarian
 				positions.append( "F" );
 				positions.append( constrPos.toString() );
 			}
-
-			GameState::addChange( NetworkCommand::SETTILEFLAGS, { QString::number( tid ), Util::tile2String( tile ) } );
 			updateCoords.push_back( constrPos );
 		}
 	}
 
-	if ( !( Util::materialType( materialSIDs.first() ) == "Soil" || Util::materialType( materialSIDs.first() ) == "Stone" ) )
+	if ( !( Global::util->materialType( materialSIDs.first() ) == "Soil" || Global::util->materialType( materialSIDs.first() ) == "Stone" ) )
 	{
 		QVariantMap constr;
 		constr.insert( "Pos", pos.toString() );
@@ -736,205 +709,123 @@ bool World::constructRamp( QVariantMap& con, Position pos, int rotation, QVarian
 	return true;
 }
 
-bool World::constructScaffold( QVariantMap& con, Position pos, int rotation, QVariantList itemUIDs, QVariantList materialUIDs, QStringList materialSIDs, Position extractTo )
+bool World::constructWorkshop( QString constructionSID, Position pos, int rotation, QList<unsigned int> itemUIDs, Position extractTo )
 {
-	QList<Position> updateCoords;
-	QVariantList positions;
-
-	QString materialSID = materialSIDs.first();
-
-	QString type;
-
-	// object is rotatable, add rotation suffixes to spriteIds
-	auto spl = DB::selectRows( "Constructions_Sprites", "ID", con.value( "ID" ).toString() );
-
-	for ( auto sp : spl )
+	auto dbws = DB::workshop( constructionSID );
+	if( dbws )
 	{
-		Position offset( sp.value( "Offset" ).toString() );
-		Position constrPos( pos + offset );
+		QVariantList spriteComposition;
 
-		unsigned int tid = constrPos.toInt();
-		Tile& tile       = getTile( tid );
-
-		if ( sp.contains( "Type" ) )
+		auto cpl = dbws->components;
+		for ( auto cp : cpl )
 		{
-			type                   = sp.value( "Type" ).toString();
-			QString spriteSID      = sp.value( "SpriteID" ).toString();
-			unsigned int spriteUID = Global::sf().createSprite( spriteSID, { materialSID } )->uID;
+			Position offset;
 
-			if ( type == "Wall" )
+			offset   = cp.Offset;
+			int rotX = offset.x;
+			int rotY = offset.y;
+			switch ( rotation )
 			{
-				tile.wallSpriteUID = spriteUID;
-				tile.wallType      = ( WallType )( WallType::WT_SCAFFOLD | WallType::WT_CONSTRUCTED );
-				tile.wallMaterial  = materialUIDs.first().toUInt();
-				tile.wallRotation  = rotation;
-				tile.flags += TileFlag::TF_WALKABLE;
-				positions.append( "W" );
-				positions.append( constrPos.toString() );
+				case 1:
+					offset.x = -1 * rotY;
+					offset.y = rotX;
+					break;
+				case 2:
+					offset.x = -1 * rotX;
+					offset.y = -1 * rotY;
+					break;
+				case 3:
+					offset.x = rotY;
+					offset.y = -1 * rotX;
+					break;
 			}
-			else if ( type == "Floor" )
+
+			Position constrPos( pos + offset );
+
+			unsigned int tid = constrPos.toInt();
+			Tile& tile       = getTile( tid );
+			addToUpdateList( tid );
+			QVariantMap scm;
+			scm.insert( "Pos", constrPos.toString() );
+
+			if ( cp.SpriteID.isEmpty() || cp.SpriteID == "WorkshopInputIndicator" )
 			{
-				tile.floorSpriteUID = spriteUID;
-				tile.floorType      = ( FloorType )( FloorType::FT_SCAFFOLD | FloorType::FT_CONSTRUCTION );
-				tile.floorMaterial  = materialUIDs.first().toUInt();
-				tile.floorRotation  = rotation;
-				tile.flags += TileFlag::TF_WALKABLE;
-				tile.wallType = WallType::WT_NOWALL;
-				positions.append( "F" );
-				positions.append( constrPos.toString() );
+				tile.wallType = WallType::WT_CONSTRUCTED;
+				tile.flags += TileFlag::TF_WORKSHOP;
+				spriteComposition.append( scm );
+				continue;
+			}
+
+			QStringList materialIDs;
+
+			if ( !cp.ItemID.isEmpty() )
+			{
+				QString baseItem = cp.ItemID;
+
+				for ( auto itemUID : itemUIDs )
+				{
+					if ( g->inv()->itemSID( itemUID ) == baseItem )
+					{
+						materialIDs.push_back( g->inv()->materialSID( itemUID ) );
+						break;
+					}
+				}
+			}
+			else if ( !cp.MaterialItem.isEmpty() )
+			{
+				for ( auto matID : cp.MaterialItem.split( "|" ) )
+				{
+					materialIDs.push_back( g->inv()->materialSID( itemUIDs[matID.toInt()] ) );
+				}
 			}
 			else
 			{
-				continue;
+				materialIDs.push_back( "None" );
 			}
-			GameState::addChange( NetworkCommand::SETTILEFLAGS, { QString::number( tid ), Util::tile2String( tile ) } );
-			updateCoords.push_back( constrPos );
-		}
-	}
+			bool floor = cp.IsFloor;
+			scm.insert( "IsFloor", floor );
 
-	QVariantMap constr;
-	constr.insert( "ConstructionID", "Scaffold" );
-	constr.insert( "Pos", pos.toString() );
-	constr.insert( "Positions", positions );
-	constr.insert( "Items", itemUIDs );
-	constr.insert( "Materials", materialUIDs );
-
-	for ( int i = 0; i < positions.size(); i += 2 )
-	{
-		bool isWall = ( positions[i].toString() == "W" );
-		Position insertPos( positions[i + 1] );
-		constr.insert( "Pos", insertPos.toString() );
-		if ( isWall )
-		{
-			m_wallConstructions.insert( insertPos.toInt(), constr );
-		}
-		else
-		{
-			m_floorConstructions.insert( insertPos.toInt(), constr );
-		}
-	}
-
-	updateNavigation( updateCoords, extractTo );
-
-	return true;
-}
-
-bool World::constructWorkshop( QVariantMap& con, Position pos, int rotation, QVariantList items, Position extractTo )
-{
-	QVariantList spriteComposition;
-
-	auto cpl = DB::selectRows( "Workshops_Components", "ID", con.value( "ID" ).toString() );
-	for ( auto cp : cpl )
-	{
-		QVariantMap spm = cp;
-		Position offset;
-
-		offset   = Position( spm.value( "Offset" ).toString() );
-		int rotX = offset.x;
-		int rotY = offset.y;
-		switch ( rotation )
-		{
-			case 1:
-				offset.x = -1 * rotY;
-				offset.y = rotX;
-				break;
-			case 2:
-				offset.x = -1 * rotX;
-				offset.y = -1 * rotY;
-				break;
-			case 3:
-				offset.x = rotY;
-				offset.y = -1 * rotX;
-				break;
-		}
-
-		Position constrPos( pos + offset );
-
-		unsigned int tid = constrPos.toInt();
-		Tile& tile       = getTile( tid );
-		addToUpdateList( tid );
-		QVariantMap scm;
-		scm.insert( "Pos", constrPos.toString() );
-		scm.insert( "OldTileVals", Util::tile2String( tile ) );
-
-		if ( spm.value( "SpriteID" ).toString().isEmpty() || spm.value( "SpriteID" ).toString() == "WorkshopInputIndicator" )
-		{
-			tile.wallType = WallType::WT_CONSTRUCTED;
-			tile.flags += TileFlag::TF_WORKSHOP;
-			spriteComposition.append( scm );
-			continue;
-		}
-
-		QStringList materialIDs;
-
-		if ( !spm.value( "ItemID" ).toString().isEmpty() )
-		{
-			QString baseItem = spm.value( "ItemID" ).toString();
-
-			for ( auto item : items )
+			if ( floor )
 			{
-				if ( Global::inv().itemSID( item.toUInt() ) == baseItem )
+				tile.floorSpriteUID = g->sf()->createSprite( cp.SpriteID, materialIDs )->uID;
+				scm.insert( "UID", tile.floorSpriteUID );
+				spriteComposition.append( scm );
+				tile.floorType = FT_SOLIDFLOOR;
+				setWalkable( constrPos, true );
+			}
+			else
+			{
+				Sprite* sprite     = g->sf()->createSprite( cp.SpriteID, materialIDs );
+				tile.wallSpriteUID = sprite->uID;
+				setWallSpriteAnim( constrPos, sprite->anim );
+				scm.insert( "UID", tile.wallSpriteUID );
+				spriteComposition.append( scm );
+
+				if ( !cp.WallRotation.isEmpty() )
 				{
-					materialIDs.push_back( Global::inv().materialSID( item.toUInt() ) );
-					break;
+					QString rot = cp.WallRotation;
+					if ( rot == "FR" )
+						tile.wallRotation = 0;
+					else if ( rot == "FL" )
+						tile.wallRotation = 1;
+					else if ( rot == "BL" )
+						tile.wallRotation = 2;
+					else if ( rot == "BR" )
+						tile.wallRotation = 3;
 				}
+				tile.wallRotation = ( tile.wallRotation + rotation ) % 4;
+				tile.wallType     = WallType::WT_CONSTRUCTED;
 			}
+			tile.flags += TileFlag::TF_WORKSHOP;
 		}
-		else if ( !spm.value( "MaterialItem" ).toString().isEmpty() )
-		{
-			for ( auto matID : spm.value( "MaterialItem" ).toString().split( "|" ) )
-			{
-				materialIDs.push_back( Global::inv().materialSID( items[matID.toInt()].toUInt() ) );
-			}
-		}
-		else
-		{
-			materialIDs.push_back( "None" );
-		}
-		bool floor = spm.value( "IsFloor" ).toBool();
-		scm.insert( "IsFloor", floor );
 
-		if ( floor )
-		{
-			tile.floorSpriteUID = Global::sf().createSprite( spm.value( "SpriteID" ).toString(), materialIDs )->uID;
-			scm.insert( "UID", tile.floorSpriteUID );
-			spriteComposition.append( scm );
-			tile.floorType = FT_SOLIDFLOOR;
-			setWalkable( constrPos, true );
-		}
-		else
-		{
-			Sprite* sprite     = Global::sf().createSprite( spm.value( "SpriteID" ).toString(), materialIDs );
-			tile.wallSpriteUID = sprite->uID;
-			Global::w().setWallSpriteAnim( constrPos, sprite->anim );
-			scm.insert( "UID", tile.wallSpriteUID );
-			spriteComposition.append( scm );
+		Workshop* ws = g->wsm()->addWorkshop( dbws->ID, pos, rotation );
+		ws->setSourceItems( Util::uintList2Variant( itemUIDs ) );
+		ws->setSprites( spriteComposition );
 
-			if ( spm.contains( "WallRotation" ) )
-			{
-				QString rot = spm.value( "WallRotation" ).toString();
-				if ( rot == "FR" )
-					tile.wallRotation = 0;
-				else if ( rot == "FL" )
-					tile.wallRotation = 1;
-				else if ( rot == "BL" )
-					tile.wallRotation = 2;
-				else if ( rot == "BR" )
-					tile.wallRotation = 3;
-			}
-			tile.wallRotation = ( tile.wallRotation + rotation ) % 4;
-			tile.wallType     = WallType::WT_CONSTRUCTED;
-		}
-		tile.flags += TileFlag::TF_WORKSHOP;
-		GameState::addChange( NetworkCommand::SETTILEFLAGS, { QString::number( tid ), Util::tile2String( tile ) } );
+		return true;
 	}
-
-	Workshop* ws = Global::wsm().addWorkshop( con.value( "ID" ).toString(), pos, rotation );
-	ws->setSourceItems( items );
-	GameState::addChange2( NetworkCommand::WORKSHOPADD, QJsonDocument::fromVariant( ws->serialize() ).toJson() );
-	ws->setSprites( spriteComposition );
-
-	return true;
+	return false;
 }
 
 bool World::constructRampCorner( QVariantMap& con, Position pos, int rotation, QVariantList itemUIDs, QVariantList materialUIDs, QStringList materialSIDs, Position extractTo )
@@ -955,7 +846,7 @@ bool World::constructRampCorner( QVariantMap& con, Position pos, int rotation, Q
 
 		QString spriteSID = spMap.value( "SpriteID" ).toString();
 
-		unsigned int spriteUID = Global::sf().createSprite( spriteSID, materialSIDs )->uID;
+		unsigned int spriteUID = g->sf()->createSprite( spriteSID, materialSIDs )->uID;
 
 		tile.wallSpriteUID = spriteUID;
 
@@ -1019,8 +910,6 @@ bool World::constructRampCorner( QVariantMap& con, Position pos, int rotation, Q
 			positions.append( "F" );
 			positions.append( constrPos.toString() );
 		}
-
-		//GameState::addChange( NetworkCommand::SETTILEFLAGS, { QString::number( tid ), Util::tile2String( tile ) } );
 		updateCoords.push_back( constrPos );
 	}
 
@@ -1059,25 +948,25 @@ bool World::constructItem( QString itemSID, Position pos, int rotation, QList<un
 
 	QVariantMap constr;
 
-	if ( Global::inv().itemSID( itemID ) != itemSID )
+	if ( g->inv()->itemSID( itemID ) != itemSID )
 	{
-		qDebug() << "create item from components before installing";
-		auto vItems = Util::uintList2Variant( items );
-		itemID      = Global::inv().createItem( pos, itemSID, vItems );
+		//qDebug() << "create item from components before installing";
+		auto vItems = Global::util->uintList2Variant( items );
+		itemID      = g->inv()->createItem( pos, itemSID, vItems );
 		constr.insert( "Items", vItems );
 		constr.insert( "FromParts", true );
 		for ( auto item : items )
 		{
-			Global::inv().setConstructedOrEquipped( item, true );
+			g->inv()->setConstructed( item, true );
 		}
 	}
 
-	QString type  = DB::select( "Category", "Items", Global::inv().itemUID( itemID ) ).toString();
-	QString group = DB::select( "ItemGroup", "Items", Global::inv().itemUID( itemID ) ).toString();
+	QString type  = DB::select( "Category", "Items", g->inv()->itemSID( itemID ) ).toString();
+	QString group = DB::select( "ItemGroup", "Items", g->inv()->itemSID( itemID ) ).toString();
 
 	Tile& tile = getTile( pos );
 
-	Sprite* sprite = Global::sf().getSprite( Global::inv().spriteID( itemID ) );
+	Sprite* sprite = g->sf()->getSprite( g->inv()->spriteID( itemID ) );
 
 	QString location = DB::select( "Location", "Items_Tiles", itemSID ).toString();
 
@@ -1106,38 +995,43 @@ bool World::constructItem( QString itemSID, Position pos, int rotation, QList<un
 	{
 	}
 
-	Global::inv().setConstructedOrEquipped( itemID, true );
+	g->inv()->setConstructed( itemID, true );
 
-	unsigned int nextItem = Global::inv().getFirstObjectAtPosition( pos );
+	unsigned int nextItem = g->inv()->getFirstObjectAtPosition( pos );
 	if ( nextItem )
 	{
-		Global::w().setItemSprite( pos, Global::inv().spriteID( nextItem ) );
+		setItemSprite( pos, g->inv()->spriteID( nextItem ) );
 	}
 	else
 	{
-		Global::w().setItemSprite( pos, 0 );
+		setItemSprite( pos, 0 );
 	}
-	//qDebug() << "##" << type << group;
+	//qDebug() << "##" << type << group << itemSID;
+	// TODO remove this workaround
+	if( itemSID == "AlarmBell" )
+	{
+		group = "AlarmBell";
+	}
 
 	addToUpdateList( pos );
 	switch ( m_constrItemSID2ENUM.value( type ) )
 	{
 		case CI_STORAGE:
-			Global::spm().addContainer( itemID, pos );
+			g->spm()->addContainer( itemID, pos );
 			break;
 		case CI_FURNITURE:
-			Global::rm().addFurniture( itemID, pos );
+			g->rm()->addFurniture( itemID, pos );
 			break;
 	}
 	switch ( m_constrItemSID2ENUM.value( group ) )
 	{
 		case CI_DOOR:
 			setTileFlag( pos, TileFlag::TF_DOOR );
-			Global::rm().addDoor( pos, itemID, Global::inv().materialUID( itemID ) );
+			g->rm()->addDoor( pos, itemID, g->inv()->materialUID( itemID ) );
 			break;
 		case CI_LIGHT:
 		{
-			int intensity = DB::select( "LightIntensity", "Items", Global::inv().itemSID( itemID ) ).toInt();
+			int intensity = DB::select( "LightIntensity", "Items", g->inv()->itemSID( itemID ) ).toInt();
 			constr.insert( "Light", intensity );
 			if ( intensity )
 			{
@@ -1146,16 +1040,16 @@ bool World::constructItem( QString itemSID, Position pos, int rotation, QList<un
 		}
 		break;
 		case CI_ALARMBELL:
-			Global::rm().addFurniture( itemID, pos );
+			g->rm()->addFurniture( itemID, pos );
 			break;
 		case CI_MECHANISM:
-			Global::mcm().installItem( itemID, pos, rotation );
+			g->mcm()->installItem( itemID, pos, rotation );
 			break;
 		case CI_HYDRAULICS:
 			return constructPipe( itemSID, pos, itemID );
 			break;
 		case CI_FARMUTIL:
-			Global::fm().addUtil( pos, itemID );
+			g->fm()->addUtil( pos, itemID );
 			break;
 	}
 
@@ -1206,9 +1100,9 @@ bool World::deconstruct( Position decPos, Position workPos, bool ignoreGravity )
 		m_wallConstructions.remove( decPos.toInt() );
 		return deconstruct2( constr, decPos, false, workPos, ignoreGravity );
 	}
-	else if ( Global::wsm().isWorkshop( decPos ) )
+	else if ( g->wsm()->isWorkshop( decPos ) )
 	{
-		Workshop* ws     = Global::wsm().workshopAt( decPos );
+		Workshop* ws     = g->wsm()->workshopAt( decPos );
 		auto sourceItems = ws->sourceItems();
 		ws->destroy();
 
@@ -1218,28 +1112,21 @@ bool World::deconstruct( Position decPos, Position workPos, bool ignoreGravity )
 			Position wsPos( spritevm.toMap().value( "Pos" ).toString() );
 			unsigned int tid = wsPos.toInt();
 			Tile& tile       = getTile( tid );
-			if ( !m_floorConstructions.contains( wsPos.toInt() ) )
-			{
-				Util::string2Tile( tile, spritevm.toMap().value( "OldTileVals" ).toString() );
-			}
-			else
-			{
-				tile.wallSpriteUID = 0;
-				clearTileFlag( wsPos, TileFlag::TF_WORKSHOP );
-			}
+			
+			tile.wallSpriteUID = 0;
+			clearTileFlag( wsPos, TileFlag::TF_WORKSHOP );
+			tile.wallType = WallType::WT_NOWALL;
 
 			updateWalkable( wsPos );
 			addToUpdateList( wsPos );
-
-			GameState::addChange( NetworkCommand::SETTILEFLAGS, { QString::number( tid ), Util::tile2String( tile ) } );
 		}
 		for ( auto vItem : sourceItems )
 		{
-			Global::inv().putDownItem( vItem.toUInt(), workPos );
-			Global::inv().setConstructedOrEquipped( vItem.toUInt(), false );
+			g->inv()->putDownItem( vItem.toUInt(), workPos );
+			g->inv()->setConstructed( vItem.toUInt(), false );
 		}
 
-		Global::wsm().deleteWorkshop( ws->id() );
+		g->wsm()->deleteWorkshop( ws->id() );
 		return true;
 	}
 	else if ( m_floorConstructions.contains( decPos.toInt() ) )
@@ -1256,20 +1143,25 @@ bool World::deconstruct( Position decPos, Position workPos, bool ignoreGravity )
 
 bool World::deconstruct2( QVariantMap constr, Position decPos, bool isFloor, Position workPos, bool ignoreGravity )
 {
+	qDebug() << "deconstruct" << decPos.toString() << isFloor;
 	if ( constr.value( "ConstructionID" ).toString() == "Item" )
 	{
 		unsigned itemID = constr.value( "Item" ).toUInt();
 
 		QString type  = constr.value( "Type" ).toString();
 		QString group = constr.value( "Group" ).toString();
-
+		// TODO remove this workaround
+		if( g->inv()->itemSID( itemID ) == "AlarmBell" )
+		{
+			group = "AlarmBell";
+		}
 		switch ( m_constrItemSID2ENUM.value( type ) )
 		{
 			case CI_STORAGE:
-				Global::spm().removeContainer( itemID, decPos );
+				g->spm()->removeContainer( itemID, decPos );
 				break;
 			case CI_FURNITURE:
-				Global::rm().removeFurniture( decPos );
+				g->rm()->removeFurniture( decPos );
 				break;
 			case CI_HYDRAULICS:
 				deconstructPipe( constr, decPos, workPos );
@@ -1278,10 +1170,10 @@ bool World::deconstruct2( QVariantMap constr, Position decPos, bool isFloor, Pos
 		{
 			case CI_DOOR:
 				clearTileFlag( decPos, TileFlag::TF_DOOR );
-				Global::rm().removeDoor( decPos );
+				g->rm()->removeDoor( decPos );
 				break;
 			case CI_ALARMBELL:
-				Global::rm().removeFurniture( decPos );
+				g->rm()->removeFurniture( decPos );
 				break;
 			case CI_LIGHT:
 			{
@@ -1289,10 +1181,10 @@ bool World::deconstruct2( QVariantMap constr, Position decPos, bool isFloor, Pos
 			}
 			break;
 			case CI_MECHANISM:
-				Global::mcm().uninstallItem( itemID );
+				g->mcm()->uninstallItem( itemID );
 				break;
 			case CI_FARMUTIL:
-				Global::fm().removeUtil( decPos );
+				g->fm()->removeUtil( decPos );
 				break;
 		}
 
@@ -1308,7 +1200,7 @@ bool World::deconstruct2( QVariantMap constr, Position decPos, bool isFloor, Pos
 
 				if ( m_creaturePositions.contains( decPos.toInt() ) )
 				{
-					Global::gm().forceMoveGnomes( decPos, workPos );
+					g->gm()->forceMoveGnomes( decPos, workPos );
 				}
 				discover( decPos.belowOf() );
 			}
@@ -1323,15 +1215,15 @@ bool World::deconstruct2( QVariantMap constr, Position decPos, bool isFloor, Pos
 		{
 			for ( auto vItem : constr.value( "Items" ).toList() )
 			{
-				Global::inv().setConstructedOrEquipped( vItem.toUInt(), false );
-				Global::inv().moveItemToPos( vItem.toUInt(), workPos );
+				g->inv()->setConstructed( vItem.toUInt(), false );
+				g->inv()->moveItemToPos( vItem.toUInt(), workPos );
 			}
-			Global::inv().destroyObject( itemID );
+			g->inv()->destroyObject( itemID );
 		}
 		else
 		{
-			Global::inv().setConstructedOrEquipped( itemID, false );
-			Global::inv().moveItemToPos( itemID, workPos );
+			g->inv()->setConstructed( itemID, false );
+			g->inv()->moveItemToPos( itemID, workPos );
 		}
 
 		return true;
@@ -1378,6 +1270,7 @@ bool World::deconstruct2( QVariantMap constr, Position decPos, bool isFloor, Pos
 				Tile& tile         = getTile( pos );
 				tile.wallType      = ( WallType )( WallType::WT_NOWALL );
 				tile.wallSpriteUID = 0;
+				tile.wallMaterial  = 0;
 				if ( tile.floorType != ( FloorType )( FloorType::FT_NOFLOOR ) )
 				{
 					tile.flags += TileFlag::TF_WALKABLE;
@@ -1390,20 +1283,21 @@ bool World::deconstruct2( QVariantMap constr, Position decPos, bool isFloor, Pos
 				Tile& tile          = getTile( pos );
 				tile.floorType      = ( FloorType )( FloorType::FT_NOFLOOR );
 				tile.floorSpriteUID = 0;
+				tile.floorMaterial  = 0;
 				clearTileFlag( pos, TileFlag::TF_WALKABLE );
 
 				PositionEntry pe;
-				if ( Global::inv().getObjectsAtPosition( pos, pe ) )
+				if ( g->inv()->getObjectsAtPosition( pos, pe ) )
 				{
 					for ( auto i : pe )
 					{
-						Global::inv().moveItemToPos( i, workPos );
+						g->inv()->moveItemToPos( i, workPos );
 					}
 				}
 				/*				
 				if( !ignoreGravity )
 				{
-					Global::inv().gravity( pos );
+					g->inv()->gravity( pos );
 				}
 				*/
 				if ( tile.flags & TileFlag::TF_SUNLIGHT )
@@ -1444,24 +1338,24 @@ bool World::deconstruct2( QVariantMap constr, Position decPos, bool isFloor, Pos
 			clearTileFlag( decPos, TileFlag::TF_WALKABLE );
 
 			PositionEntry pe;
-			if ( Global::inv().getObjectsAtPosition( decPos, pe ) )
+			if ( g->inv()->getObjectsAtPosition( decPos, pe ) )
 			{
 				for ( auto i : pe )
 				{
-					Global::inv().moveItemToPos( i, workPos );
+					g->inv()->moveItemToPos( i, workPos );
 				}
 			}
 
 			/*
 			if( !ignoreGravity )
 			{
-				Global::inv().gravity( decPos );
+				g->inv()->gravity( decPos );
 			}
 			*/
 
 			if ( m_creaturePositions.contains( decPos.toInt() ) )
 			{
-				Global::gm().forceMoveGnomes( decPos, workPos );
+				g->gm()->forceMoveGnomes( decPos, workPos );
 			}
 			if ( tile.flags & TileFlag::TF_SUNLIGHT )
 			{
@@ -1479,7 +1373,7 @@ bool World::deconstruct2( QVariantMap constr, Position decPos, bool isFloor, Pos
 	int i              = 0;
 	for ( auto item : items )
 	{
-		Global::inv().createItem( workPos, DBH::itemSID( item.toUInt() ), DBH::materialSID( mats[i].toUInt() ) );
+		g->inv()->createItem( workPos, DBH::itemSID( item.toUInt() ), DBH::materialSID( mats[i].toUInt() ) );
 	}
 
 	for ( auto updatePos : updateCoords )

@@ -26,6 +26,40 @@
 #include <QOpenGLWindow>
 #include <QTimer>
 
+enum class KeyboardMove : unsigned char
+{
+	None  = 0,
+	Up    = 0x01,
+	Down  = 0x02,
+	Left  = 0x04,
+	Right = 0x08
+};
+
+inline KeyboardMove operator+( KeyboardMove a, KeyboardMove b )
+{
+	return static_cast<KeyboardMove>( static_cast<unsigned char>( a ) | static_cast<unsigned char>( b ) );
+}
+
+inline KeyboardMove operator&( KeyboardMove a, KeyboardMove b )
+{
+	return static_cast<KeyboardMove>( static_cast<unsigned char>( a ) & static_cast<unsigned char>( b ) );
+}
+
+inline KeyboardMove operator-( KeyboardMove a )
+{
+	return static_cast<KeyboardMove>( ~static_cast<unsigned char>( a ) );
+}
+
+inline KeyboardMove& operator+=( KeyboardMove& a, KeyboardMove b )
+{
+	return a = a + b;
+}
+
+inline KeyboardMove& operator-=( KeyboardMove& a, KeyboardMove b )
+{
+	return a = a & -b;
+}
+
 struct Position;
 class QOpenGLTexture;
 class MainWindowRenderer;
@@ -72,10 +106,8 @@ private:
 
 	void onExit();
 
-	Position m_cursorPos;
-	QString m_selectedAction = "";
-
 	QTimer* m_timer = nullptr;
+	QElapsedTimer m_keyboardMovementTimer;
 
 	Noesis::IView* m_view          = nullptr;
 	MainWindowRenderer* m_renderer = nullptr;
@@ -96,11 +128,30 @@ private:
 
 	bool m_pendingUpdate = false;
 
+	KeyboardMove m_keyboardMove = KeyboardMove::None;
+
 public slots:
 	void redraw();
-	void noesisTick();
+	void idleRenderTick();
+	void onFullScreen( bool value );
+	void keyboardMove();
+
+	void onSetWindowSize( int width, int height );
+
+	void onInitViewAfterLoad();
+
 signals:
 	void signalWindowSize( int w, int h );
 	void signalViewLevel( int level );
-	void signalSelectTile( unsigned int );
+	
+
+	void signalKeyPress( int key );
+	void signalUpdateRenderOptions();
+	void signalTogglePause();
+
+	void signalRenderParams( int width, int height, int moveX, int moveY, float scale, int rotation );
+	void signalRotateSelection();
+	void signalMouse( int mouseX, int mouseY, bool shift, bool ctrl );
+	void signalLeftClick( bool shift, bool ctrl );
+	void signalRightClick();
 };

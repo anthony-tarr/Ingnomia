@@ -103,6 +103,8 @@ enum class TileFlag : quint64
 	TF_PIPE              = 0x08000000,
 	TF_AQUIFIER          = 0x10000000,
 	TF_DEAQUIFIER        = 0x20000000,
+	TF_TRANSPARENT       = 0x40000000,
+	TF_OVERSIZE          = 0x80000000,
 };
 
 bool operator|( const TileFlag& a, const TileFlag& b ) = delete;
@@ -146,6 +148,15 @@ enum WaterFlow : unsigned char
 	WF_DOWN   = 0x20,
 	WF_EVAP   = 0x40
 };
+constexpr inline WaterFlow operator+( const WaterFlow& a, const WaterFlow& b )
+{
+	return static_cast<WaterFlow>( static_cast<unsigned char>( a ) | static_cast<unsigned char>( b ) );
+}
+constexpr inline void operator+=( WaterFlow& a, const WaterFlow& b )
+{
+	a = a + b;
+}
+
 Q_DECLARE_TYPEINFO( WaterFlow, Q_PRIMITIVE_TYPE );
 
 struct Tile

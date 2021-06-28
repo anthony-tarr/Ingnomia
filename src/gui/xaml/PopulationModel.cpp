@@ -58,7 +58,7 @@ GnomeSkill::GnomeSkill( const GuiSkillInfo& skill, unsigned int gnomeID, Populat
 	m_name      = skill.name.toStdString().c_str();
 	m_level	= QString::number( skill.level ).toStdString().c_str();
 	m_checked   = skill.active;
-	m_color = ( "SkillGroup" + skill.group + "Brush" ).toStdString().c_str();
+	m_color = skill.color.toStdString().c_str();
 	m_skillID = skill.sid.toStdString().c_str();
 }
 
@@ -104,6 +104,7 @@ GnomeRow::GnomeRow( const GuiGnomeInfo& gnome, Noesis::Ptr<Noesis::ObservableCol
 	m_id        = gnome.id;
 	m_idString  = QString::number( gnome.id ).toStdString().c_str();
 	m_name      = gnome.name.toStdString().c_str();
+	m_professionName = gnome.profession;
 
 	m_skills = *new ObservableCollection<GnomeSkill>();
 
@@ -121,6 +122,24 @@ GnomeRow::GnomeRow( const GuiGnomeInfo& gnome, Noesis::Ptr<Noesis::ObservableCol
 			SetProfession( m_professions->Get( i ) );
 			break;
 		}
+	}
+}
+
+void GnomeRow::updateProfessionList( Noesis::Ptr<Noesis::ObservableCollection<ProfItem>> professions )
+{
+	m_professions = professions;
+	m_selectedProfession = nullptr;
+	for( int i = 0; i < m_professions->Count(); ++i )
+	{
+		if( m_professions->Get( i )->GetName() == m_professionName )
+		{
+			SetProfession( m_professions->Get( i ) );
+			break;
+		}
+	}
+	if ( m_selectedProfession == nullptr )
+	{
+		SetProfession( m_professions->Get( 0 ) );
 	}
 }
 
@@ -270,6 +289,12 @@ void PopulationModel::updateProfessionList( const QStringList& professions )
 	{
 		SetProfession( m_professions->Get( 0 ) );
 	}
+
+	for( int i = 0; i < m_gnomes->Count(); ++i )
+	{
+		m_gnomes->Get( i )->updateProfessionList( m_professions );
+	}
+
 	OnPropertyChanged( "Professions" );
 }
 
@@ -337,8 +362,6 @@ void PopulationModel::onRemoveAllSkillsCmd( BaseComponent* param )
 
 void PopulationModel::onSortCmd( BaseComponent* param )
 {
-	qDebug() << param->ToString().Str();
-
 	m_proxy->sortGnomes( param->ToString().Str() );
 }
 
@@ -390,7 +413,6 @@ const char* PopulationModel::GetShowProfEdit() const
 
 void PopulationModel::updateSchedules( const GuiScheduleInfo& info )
 {
-	qDebug() << "PopulationModel::updateSchedules";
 	m_scheduleGnomes->Clear();
 
 	for( const auto& gnome : info.schedules )

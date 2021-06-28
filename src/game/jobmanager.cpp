@@ -23,6 +23,7 @@
 #include "../base/global.h"
 #include "../base/util.h"
 #include "../game/farmingmanager.h"
+#include "../game/game.h"
 #include "../game/gnomemanager.h"
 #include "../game/inventory.h"
 #include "../game/mechanismmanager.h"
@@ -36,29 +37,15 @@
 #include <QElapsedTimer>
 #include <QVariantMap>
 
-JobManager::JobManager() :
-	m_startIndex( 0 )
+JobManager::JobManager( Game* parent ) :
+	m_startIndex( 0 ),
+	g( parent ),
+	QObject( parent )
 {
-}
-
-JobManager::~JobManager()
-{
-}
-
-void JobManager::reset()
-{
-	m_jobList.clear();
-	m_jobsPerType.clear();
-	m_jobPositions.clear();
-	m_returnedJobQueue.clear();
-	m_skillToInt.clear();
-
-	for ( auto job : DB::ids( "Jobs" ) )
+	for ( auto job : DB::jobIds() )
 	{
-		m_jobsPerType.insert( job, QMultiMap<int, unsigned int>() );
+		m_jobsPerType.insert( job, QMultiHash<int, unsigned int>() );
 	}
-
-	m_jobIDs.clear();
 
 	m_skillToInt.insert( "Mining", SK_Mining );
 	m_skillToInt.insert( "Masonry", SK_Masonry );
@@ -110,12 +97,27 @@ void JobManager::reset()
 	for ( auto skillID : DB::ids( "Skills" ) )
 	{
 		QStringList jobs;
-		for ( auto job : DB::select2( "ID", "Jobs", "SkillID", skillID ) )
+		for( auto jobID : DB::jobIds() )
 		{
-			jobs.append( job.toString() );
+			auto dbjob = DB::job( jobID );
+			if( dbjob->SkillID == skillID )
+			{
+				jobs.append( jobID );
+			}
 		}
 		m_jobIDs.insert( skillID, jobs );
 	}
+
+	auto skillList = DB::execQuery2( "SELECT DISTINCT \"SkillID\" FROM Crafts" );
+	for( auto skill : skillList )
+	{
+		m_workshopSkills.insert( skill.toString() );
+	}
+}
+
+JobManager::~JobManager()
+{
+	m_jobList.clear();
 }
 
 void JobManager::onTick()
@@ -123,104 +125,119 @@ void JobManager::onTick()
 	QElapsedTimer timer;
 	timer.start();
 
-	Inventory& inv     = Global::inv();
 	unsigned int jobID = 0;
 
-	QMutexLocker lock( &m_mutex );
 	int queueSize = m_returnedJobQueue.size();
 
 	QQueue<unsigned int> skippedJobs;
 
 	while ( !m_returnedJobQueue.empty() )
 	{
-		//QMutexLocker lock( &m_mutex );
 		jobID = m_returnedJobQueue.dequeue();
-		//lock.unlock();
 		--queueSize;
-		Job& job = m_jobList[jobID];
+		QSharedPointer<Job> job = m_jobList.value( jobID );
 
-		if ( workPositionWalkable( job.id() ) && requiredToolExists( job.id() ) )
+		if( job )
 		{
-			if ( requiredItemsExist( jobID ) )
+			if ( workPositionWalkable( job->id() ) && requiredToolExists( job->id() ) )
 			{
-				m_jobsPerType[job.type()].insert( job.priority(), job.id() );
+				if ( requiredItemsAvail( jobID ) )
+				{
+					m_jobsPerType[job->type()].insert( job->priority(), job->id() );
+				}
+				else
+				{
+					skippedJobs.enqueue( jobID );
+				}
 			}
 			else
 			{
-				job.setComponentMissing( true );
 				skippedJobs.enqueue( jobID );
 			}
 		}
-		else
-		{
-			//QMutexLocker lock( &m_mutex );
-			skippedJobs.enqueue( jobID );
-			//lock.unlock();
-		}
 
 		if ( timer.elapsed() > 3 )
-			return;
+		{
+			break;
+		}
 	}
 	m_returnedJobQueue += skippedJobs;
 }
 
-bool JobManager::requiredItemsExist( unsigned int jobID )
+// In order to cache the missing required items we iterate over all every time
+// which prevents us from breaking the loop ASAP.
+// Not sure if another approach would work better and still allow GUI to access
+// information without querying the game state
+bool JobManager::requiredItemsAvail( unsigned int jobID )
 {
-	Job& job = m_jobList[jobID];
-
-	for ( auto rim : job.requiredItems() )
+	QSharedPointer<Job> job       = m_jobList.value( jobID );
+	bool found_all = true;
+	for ( auto rim : job->requiredItems() )
 	{
 		bool found = false;
-		for ( auto pos : job.possibleWorkPositions() )
+		for ( auto pos : job->possibleWorkPositions() )
 		{
-			if ( Global::inv().checkReachableItems( pos, true, rim.count, rim.itemSID, rim.materialSID ) )
+			if ( g->inv()->checkReachableItems( pos, true, rim.count, rim.itemSID, rim.materialSID ) )
 			{
-				found = true;
+				found         = true;
+				rim.available = true;
 				break;
 			}
 		}
 		if ( !found )
 		{
-			return false;
+			found_all     = false;
+			rim.available = false;
+
+			//is item craftable?
+			if ( Global::craftable.contains( rim.itemSID ) )
+			{
+				// create craft job
+				g->wsm()->autoGenCraftJob( rim.itemSID, rim.materialSID, rim.count );
+			}
 		}
 	}
-	return true;
+	return found_all;
 }
 
 bool JobManager::workPositionWalkable( unsigned int jobID )
 {
 	if ( m_jobList.contains( jobID ) )
 	{
-		Job& job     = m_jobList[jobID];
-		Position pos = job.pos();
-		job.clearPossibleWorkPositions();
+		QSharedPointer<Job> job     = m_jobList.value( jobID );
+		Position pos = job->pos();
+
+		job->clearPossibleWorkPositions();
 		// jobs on same tile
-		auto wpl = job.origWorkPosOffsets();
-		for ( auto spos : wpl )
+		auto wpl = job->origWorkPosOffsets();
+		for ( const auto& offset : wpl )
 		{
-			Position offset( spos );
 			Position testPos( pos + offset );
-			if ( Global::w().isWalkable( testPos ) )
+			if ( g->w()->isWalkableGnome( testPos ) )
 			{
-				job.addPossibleWorkPosition( testPos );
+				job->addPossibleWorkPosition( testPos );
 			}
 		}
-		return job.possibleWorkPositions().size() > 0;
+
+		return job->possibleWorkPositions().size() > 0;
 	}
 	return false;
 }
 
 bool JobManager::requiredToolExists( unsigned int jobID )
 {
-	Job& job = m_jobList[jobID];
-	auto rt  = job.requiredTool();
+	QSharedPointer<Job> job = m_jobList.value( jobID );
+	auto rt  = job->requiredTool();
+
+	// need to figure out how to check rt 'inuse' & 'reachable'
+	job->setRequiredToolAvailable( true );
 
 	if ( rt.type.isEmpty() )
 	{
 		return true;
 	}
 
-	QMap<QString, int> mc = Global::inv().materialCountsForItem( rt.type, false );
+	QMap<QString, int> mc = g->inv()->materialCountsForItem( rt.type, false );
 	QStringList keys      = mc.keys();
 
 	for ( auto key : keys )
@@ -238,6 +255,8 @@ bool JobManager::requiredToolExists( unsigned int jobID )
 			}
 		}
 	}
+
+	job->setRequiredToolAvailable( false );
 	return false;
 }
 
@@ -245,14 +264,14 @@ bool JobManager::insertIntoPositionHash( unsigned int jobID )
 {
 	if ( m_jobList.contains( jobID ) )
 	{
-		Job& job = m_jobList[jobID];
-		if ( m_jobPositions.contains( job.pos().toInt() ) )
+		QSharedPointer<Job> job = m_jobList.value( jobID );
+		if ( m_jobPositions.contains( job->pos() ) )
 		{
 			return false;
 		}
 		else
 		{
-			m_jobPositions.insert( job.pos().toInt(), job.id() );
+			m_jobPositions.insert( job->pos(), job->id() );
 		}
 	}
 	return true;
@@ -262,105 +281,94 @@ void JobManager::removeFromPositionHash( unsigned int jobID )
 {
 	if ( m_jobList.contains( jobID ) )
 	{
-		Job& job = m_jobList[jobID];
-		if ( m_jobPositions.contains( job.pos().toInt() ) )
+		QSharedPointer<Job> job = m_jobList.value( jobID );
+		if ( m_jobPositions.contains( job->pos() ) )
 		{
-			m_jobPositions.remove( job.pos().toInt() );
+			m_jobPositions.remove( job->pos() );
 		}
 	}
 }
 
 void JobManager::addLoadedJob( QVariant vals )
 {
-	Job job( vals.toMap() );
+	QSharedPointer<Job> job( new Job( vals.toMap() ) );
 
-	m_jobList.insert( job.id(), job );
+	m_jobList.insert( job->id(), job );
 
-	if ( !insertIntoPositionHash( job.id() ) )
+	if ( !insertIntoPositionHash( job->id() ) )
 	{
 		return;
 	}
 
-	if ( isReachable( job.id(), 0 ) )
+	if ( isReachable( job->id(), 0 ) )
 	{
-		m_jobsPerType[job.type()].insert( job.priority(), job.id() );
+		m_jobsPerType[job->type()].insert( job->priority(), job->id() );
 	}
 	else
 	{
-		QMutexLocker lock( &m_mutex );
-		m_returnedJobQueue.enqueue( job.id() );
+		m_returnedJobQueue.enqueue( job->id() );
 	}
 
-	setJobSprites( job.id(), job.isWorked(), false );
+	setJobSprites( job->id(), job->isWorked(), false );
 }
 
 unsigned int JobManager::addJob( QString type, Position pos, int rotation, bool noJobSprite )
 {
-	//qDebug() << "jobManager() addJob simple" << type << pos.toString();
-	if ( Global::w().hasJob( pos ) )
+	if ( g->w()->hasJob( pos ) || m_jobPositions.contains( pos ) )
 	{
 		return 0;
 	}
-	QMutexLocker lock( &m_mutex );
-	Job job;
-	job.setType( type );
-	job.setPos( pos );
-	job.setRotation( rotation );
-	job.setNoJobSprite( noJobSprite );
+	QSharedPointer<Job> job( new Job );
+	job->setType( type );
+	job->setPos( pos );
+	job->setRotation( rotation );
+	job->setNoJobSprite( noJobSprite );
+		
+	job->setRequiredSkill( Global::util->requiredSkill( type ) );
+	job->setRequiredTool( Global::util->requiredTool( type ), Global::util->requiredToolLevel( type, pos ) );
 
-	job.setMayTrap( DB::select( "MayTrapGnome", "Jobs", type ).toBool() );
-	job.setRequiredSkill( Util::requiredSkill( type ) );
-	job.setRequiredTool( Util::requiredTool( type ), Util::requiredToolLevel( type, pos ) );
-
-	QString wps = DB::select( "WorkPosition", "Jobs", job.type() ).toString();
-	job.setOrigWorkPosOffsets( wps );
-
-	m_jobList.insert( job.id(), job );
-
-	insertIntoPositionHash( job.id() );
-#if 0
-	if ( isReachable( job.id(), 0 ) )
+	auto dbjb = DB::job( type );
+	if( dbjb )
 	{
-		m_jobsPerType[type].push_back( job.id() );
-	}
-	else
-	{
-		QMutexLocker lock( &m_mutex );
-		m_returnedJobQueue.enqueue( job.id() );
-	}
-#else
-	m_returnedJobQueue.enqueue( job.id() );
-#endif
-	if ( !noJobSprite )
-	{
-		setJobSprites( job.id(), false, false );
+		job->setMayTrap( dbjb->MayTrapGnome );
+		job->setOrigWorkPosOffsets( dbjb->WorkPositions );
 	}
 
-	return job.id();
+	m_jobList.insert( job->id(), job );
+
+	insertIntoPositionHash( job->id() );
+
+	m_returnedJobQueue.enqueue( job->id() );
+
+	setJobSprites( job->id(), false, false );
+
+	return job->id();
 }
 
 unsigned int JobManager::addJob( QString type, Position pos, QString item, QList<QString> materials, int rotation, bool noJobSprite )
 {
 	//qDebug() << "JobManager::addJob " << type << item << materials << pos.toString();
 
-	if ( m_jobPositions.contains( pos.toInt() ) )
+	if ( m_jobPositions.contains( pos ) )
 	{
 		return 0;
 	}
 
-	Job job;
-	job.setType( type );
-	job.setRequiredSkill( Util::requiredSkill( type ) );
-	job.setPos( pos );
-	job.setItem( item );
-	job.setMaterial( materials.first() );
-	job.setRotation( rotation );
-	job.setNoJobSprite( noJobSprite );
-
-	QString wps = DB::select( "WorkPosition", "Jobs", job.type() ).toString();
-	job.setOrigWorkPosOffsets( wps );
-
-	QString constructionID = DB::select( "ConstructionType", "Jobs", type ).toString();
+	QSharedPointer<Job> job( new Job );
+	job->setType( type );
+	job->setRequiredSkill( Global::util->requiredSkill( type ) );
+	job->setPos( pos );
+	job->setItem( item );
+	job->setMaterial( materials.first() );
+	job->setRotation( rotation );
+	job->setNoJobSprite( noJobSprite );
+	QString constructionID;
+	auto dbjb = DB::job( type );
+	if( dbjb )
+	{
+		job->setOrigWorkPosOffsets( dbjb->WorkPositions );
+		constructionID = dbjb->ConstructionType; 
+	}
 
 	if ( !constructionID.isEmpty() )
 	{
@@ -405,15 +413,15 @@ unsigned int JobManager::addJob( QString type, Position pos, QString item, QList
 					// not used right now
 				}
 				//qDebug() << "require item " << itemID << materials[cID];
-				int itemCount = Global::inv().itemCount( itemID, materials[cID] );
+				int itemCount = g->inv()->itemCount( itemID, materials[cID] );
 				if ( itemCount - amount < 0 )
 				{
 					//qDebug() << "require " << amount << " items " << itemID << materials[cID] << " there are " << itemCount << " in the world";
-					Global::wsm().autoGenCraftJob( itemID, materials[cID], amount - itemCount );
+					g->wsm()->autoGenCraftJob( itemID, materials[cID], amount - itemCount );
 				}
 
-				job.addRequiredItem( amount, itemID, materials[cID], comp.value( "MaterialTypes" ).toStringList() );
-				job.setComponentMissing( true );
+				job->addRequiredItem( amount, itemID, materials[cID], comp.value( "MaterialTypes" ).toStringList() );
+				job->setComponentMissing( true );
 				++cID;
 			}
 		}
@@ -423,22 +431,18 @@ unsigned int JobManager::addJob( QString type, Position pos, QString item, QList
 	{
 		QVariantMap row = DB::selectRow( "Plants", item );
 		//qDebug() << row.value("SeedItemID").toString() << row.value("Material").toString();
-		job.addRequiredItem( 1, row.value( "SeedItemID" ).toString(), row.value( "Material" ).toString(), QStringList() );
-		job.setComponentMissing( true );
+		job->addRequiredItem( 1, row.value( "SeedItemID" ).toString(), row.value( "Material" ).toString(), QStringList() );
+		job->setComponentMissing( true );
 	}
 
-	m_jobList.insert( job.id(), job );
+	m_jobList.insert( job->id(), job );
 
-	insertIntoPositionHash( job.id() );
+	insertIntoPositionHash( job->id() );
 
-	QMutexLocker lock( &m_mutex );
-	m_returnedJobQueue.enqueue( job.id() );
+	m_returnedJobQueue.enqueue( job->id() );
 
-	if ( !noJobSprite )
-	{
-		setJobSprites( job.id(), false, false );
-	}
-	return job.id();
+	setJobSprites( job->id(), false, false );
+	return job->id();
 }
 
 void JobManager::setJobAvailable( unsigned int jobID )
@@ -446,8 +450,8 @@ void JobManager::setJobAvailable( unsigned int jobID )
 	setJobSprites( jobID, false, false );
 	if ( m_jobList.contains( jobID ) )
 	{
-		Job& job = m_jobList[jobID];
-		job.setIsWorked( false );
+		QSharedPointer<Job> job = m_jobList.value( jobID );
+		job->setIsWorked( false );
 	}
 }
 
@@ -455,23 +459,21 @@ void JobManager::setJobBeingWorked( unsigned int jobID, bool hasNeededTool )
 {
 	if ( m_jobList.contains( jobID ) )
 	{
-		Job& job = m_jobList[jobID];
+		QSharedPointer<Job> job = m_jobList.value( jobID );
 
-		if ( !job.noJobSprite() )
+		if ( !job->noJobSprite() )
 		{
 			if ( hasNeededTool )
 			{
 				setJobSprites( jobID, true, false );
 			}
 		}
-		job.setIsWorked( true );
+		job->setIsWorked( true );
 	}
 }
 
 unsigned int JobManager::getJob( QStringList skills, unsigned int gnomeID, Position& gnomePos )
 {
-	QMutexLocker lock( &m_mutex );
-
 	for ( auto skillID : skills )
 	{
 		unsigned int jobID = 0;
@@ -482,66 +484,25 @@ unsigned int JobManager::getJob( QStringList skills, unsigned int gnomeID, Posit
 		{
 			case SK_Hauling:
 			{
-				jobID = Global::spm().getJob();
+				jobID = g->spm()->getJob();
 				{
 					if ( jobID )
 					{
 						return jobID;
 					}
-				}
-			}
-			break;
-			case SK_Farming:
-			case SK_AnimalHusbandry:
-			case SK_Horticulture:
-			case SK_Woodcutting:
-			{
-				jobID = Global::fm().getJob( gnomeID, { skillID } );
-				{
-					if ( jobID )
-					{
-						return jobID;
-					}
-				}
-			}
-			break;
-			case SK_Machining:
-			{
-				jobID = Global::gm().getJob( gnomeID, skillID );
-				if ( jobID )
-				{
-					return jobID;
-				}
-				jobID = Global::mcm().getJob( gnomeID, skillID );
-				if ( jobID )
-				{
-					return jobID;
 				}
 			}
 			break;
 		}
 		QElapsedTimer et;
 		et.start();
-		jobID = Global::wsm().getJob( gnomeID, skillID );
-		if ( jobID )
-		{
-			return jobID;
-		}
-		if ( Global::debugMode )
-		{
-			auto ela = et.elapsed();
-			if ( ela > 20 )
-			{
-				if ( jobID )
-				{
-					qDebug() << "JM WSM GETJOB" << ela << "ms"
-							 << "job:" << skillID;
-				}
-			}
-		}
 
-		auto possibleJobIDs   = m_jobIDs.value( skillID ); //  DB::select2( "ID", "Jobs", "SkillID", skillID );
-		unsigned int regionID = Global::w().regionMap().regionID( gnomePos );
+		auto possibleJobIDs = m_jobIDs.value( skillID );
+		if( m_workshopSkills.contains( skillID ) )
+		{
+			possibleJobIDs.push_front( "CraftAtWorkshop" );
+		}
+		unsigned int regionID = g->w()->regionMap().regionID( gnomePos );
 		for ( int prio = 9; prio >= 0; --prio )
 		{
 			for ( auto jobID : possibleJobIDs )
@@ -556,29 +517,29 @@ unsigned int JobManager::getJob( QStringList skills, unsigned int gnomeID, Posit
 						int walkableNeighbors = 0;
 						for ( int i = 0; i < jobs.size(); ++i )
 						{
-							walkableNeighbors = Global::w().walkableNeighbors( m_jobList[jobs[i]].pos() );
+							walkableNeighbors = g->w()->walkableNeighbors( m_jobList[jobs[i]]->pos() );
 							pq.put( jobs[i], walkableNeighbors );
 						}
 						while ( !pq.empty() )
 						{
-							Job& j = m_jobList[pq.get()];
-							if ( !j.isWorked() && !j.isCanceled() )
+							QSharedPointer<Job> job = m_jobList[pq.get()];
+							if ( !job->isWorked() && !job->isCanceled() )
 							{
-								if ( requiredItemsExist( j.id() ) && requiredToolExists( j.id() ) )
+								if ( requiredItemsAvail( job->id() ) && requiredToolExists( job->id() ) )
 								{
-									if ( isReachable( j.id(), regionID ) && !isEnclosedBySameType( j.id() ) )
+									if ( isReachable( job->id(), regionID ) && !isEnclosedBySameType( job->id() ) )
 									{
 										//qDebug() << "getJob " <<  j->id();
-										return j.id();
+										return job->id();
 									}
 								}
 								else
 								{
 									for ( auto& type : m_jobsPerType )
 									{
-										type.remove( prio, j.id() );
+										type.remove( prio, job->id() );
 									}
-									m_returnedJobQueue.enqueue( j.id() );
+									m_returnedJobQueue.enqueue( job->id() );
 								}
 							}
 						}
@@ -588,28 +549,33 @@ unsigned int JobManager::getJob( QStringList skills, unsigned int gnomeID, Posit
 						int dist = 0;
 						for ( int i = 0; i < jobs.size(); ++i )
 						{
-							dist = m_jobList[jobs[i]].distanceSquare( gnomePos, 10 );
+							if( jobID == "CraftAtWorkshop" && m_jobList[jobs[i]]->requiredSkill() != skillID )
+							{
+								continue;
+							}
+
+							dist = m_jobList[jobs[i]]->distanceSquare( gnomePos, 10 );
 
 							if ( dist == 1 )
 							{
-								Job& j = m_jobList[jobs[i]];
-								if ( !j.isWorked() && !j.isCanceled() )
+								QSharedPointer<Job> job = m_jobList[jobs[i]];
+								if ( !job->isWorked() && !job->isCanceled() )
 								{
-									if ( requiredItemsExist( j.id() ) && requiredToolExists( j.id() ) )
+									if ( requiredItemsAvail( job->id() ) && requiredToolExists( job->id() ) )
 									{
-										if ( isReachable( j.id(), 0 ) )
+										if ( isReachable( job->id(), 0 ) )
 										{
-											//qDebug() << "getJob " <<  j->id();
-											return j.id();
+											//qDebug() << "getJob " <<  j.id();
+											return job->id();
 										}
 									}
 									else
 									{
 										for ( auto& type : m_jobsPerType )
 										{
-											type.remove( prio, j.id() );
+											type.remove( prio, job->id() );
 										}
-										m_returnedJobQueue.enqueue( j.id() );
+										m_returnedJobQueue.enqueue( job->id() );
 									}
 								}
 								continue;
@@ -619,24 +585,24 @@ unsigned int JobManager::getJob( QStringList skills, unsigned int gnomeID, Posit
 
 						while ( !pq.empty() )
 						{
-							Job& j = m_jobList[pq.get()];
-							if ( !j.isWorked() && !j.isCanceled() )
+							QSharedPointer<Job> job = m_jobList[pq.get()];
+							if ( !job->isWorked() && !job->isCanceled() )
 							{
-								if ( requiredItemsExist( j.id() ) && requiredToolExists( j.id() ) )
+								if ( requiredItemsAvail( job->id() ) && requiredToolExists( job->id() ) )
 								{
-									if ( isReachable( j.id(), regionID ) )
+									if ( isReachable( job->id(), regionID ) )
 									{
 										//qDebug() << "getJob " <<  j->id();
-										return j.id();
+										return job->id();
 									}
 								}
 								else
 								{
 									for ( auto& type : m_jobsPerType )
 									{
-										type.remove( prio, j.id() );
+										type.remove( prio, job->id() );
 									}
-									m_returnedJobQueue.enqueue( j.id() );
+									m_returnedJobQueue.enqueue( job->id() );
 								}
 							}
 						}
@@ -648,41 +614,25 @@ unsigned int JobManager::getJob( QStringList skills, unsigned int gnomeID, Posit
 	return 0;
 }
 
-Job* JobManager::getJob( unsigned int jobID )
+QSharedPointer<Job> JobManager::getJob( unsigned int jobID )
 {
 	if ( m_jobList.contains( jobID ) )
 	{
-		return &m_jobList[jobID];
+		return m_jobList.value( jobID );
 	}
-	if ( Global::spm().hasJobID( jobID ) )
+	if ( g->spm()->hasJobID( jobID ) )
 	{
-		return &Global::spm().getJob( jobID );
-	}
-	if ( Global::wsm().hasJobID( jobID ) )
-	{
-		return Global::wsm().getJob( jobID );
-	}
-	if ( Global::fm().hasJobID( jobID ) )
-	{
-		return Global::fm().getJob( jobID );
-	}
-	if ( Global::gm().hasJobID( jobID ) )
-	{
-		return Global::gm().getJob( jobID );
-	}
-	if ( Global::mcm().hasJobID( jobID ) )
-	{
-		return Global::mcm().getJob( jobID );
+		return g->spm()->getJob( jobID );
 	}
 	return nullptr;
 }
 
-Job* JobManager::getJobAtPos( Position pos )
+QSharedPointer<Job> JobManager::getJobAtPos( Position pos )
 {
-	if ( m_jobPositions.contains( pos.toInt() ) )
+	if ( m_jobPositions.contains( pos ) )
 	{
-		unsigned jobID = m_jobPositions.value( pos.toInt() );
-		return &m_jobList[jobID];
+		unsigned jobID = m_jobPositions.value( pos );
+		return m_jobList.value( jobID );
 	}
 
 	return nullptr;
@@ -692,24 +642,24 @@ bool JobManager::isEnclosedBySameType( unsigned int jobID )
 {
 	if ( m_jobList.contains( jobID ) )
 	{
-		Job& job     = m_jobList[jobID];
-		Position pos = job.pos();
-		QString type = job.type();
-		if ( m_jobPositions.contains( pos.northOf().toInt() ) )
+		QSharedPointer<Job> job     = m_jobList.value( jobID );
+		Position pos = job->pos();
+		QString type = job->type();
+		if ( m_jobPositions.contains( pos.northOf() ) )
 		{
-			if ( m_jobPositions.contains( pos.southOf().toInt() ) )
+			if ( m_jobPositions.contains( pos.southOf() ) )
 			{
-				if ( m_jobPositions.contains( pos.eastOf().toInt() ) )
+				if ( m_jobPositions.contains( pos.eastOf() ) )
 				{
-					if ( m_jobPositions.contains( pos.westOf().toInt() ) )
+					if ( m_jobPositions.contains( pos.westOf() ) )
 					{
-						if ( m_jobList[m_jobPositions[pos.northOf().toInt()]].type() == type )
+						if ( m_jobList[m_jobPositions[pos.northOf()]]->type() == type )
 						{
-							if ( m_jobList[m_jobPositions[pos.southOf().toInt()]].type() == type )
+							if ( m_jobList[m_jobPositions[pos.southOf()]]->type() == type )
 							{
-								if ( m_jobList[m_jobPositions[pos.eastOf().toInt()]].type() == type )
+								if ( m_jobList[m_jobPositions[pos.eastOf()]]->type() == type )
 								{
-									if ( m_jobList[m_jobPositions[pos.westOf().toInt()]].type() == type )
+									if ( m_jobList[m_jobPositions[pos.westOf()]]->type() == type )
 									{
 										return true;
 									}
@@ -728,33 +678,33 @@ bool JobManager::isReachable( unsigned int jobID, unsigned int regionID )
 {
 	if ( m_jobList.contains( jobID ) )
 	{
-		Job& job     = m_jobList[jobID];
-		Position pos = job.pos();
-		job.clearPossibleWorkPositions();
+		QSharedPointer<Job> job     = m_jobList.value( jobID );
+		Position pos = job->pos();
+		job->clearPossibleWorkPositions();
 		// jobs on same tile
-		auto wpl = job.origWorkPosOffsets();
+		auto wpl = job->origWorkPosOffsets();
 		//qDebug() << "### get staging for " << pos.toString();
-		for ( auto offset : wpl )
+		for ( const auto& offset : wpl )
 		{
 			Position testPos( pos + offset );
-			if ( Global::w().isWalkable( testPos ) )
+			if ( g->w()->isWalkable( testPos ) )
 			{
 				if ( regionID == 0 )
 				{
-					job.addPossibleWorkPosition( testPos );
+					job->addPossibleWorkPosition( testPos );
 				}
 				else
 				{
-					unsigned int workRegionID = Global::w().regionMap().regionID( testPos );
-					if ( Global::w().regionMap().checkConnectedRegions( regionID, workRegionID ) )
+					unsigned int workRegionID = g->w()->regionMap().regionID( testPos );
+					if ( g->w()->regionMap().checkConnectedRegions( regionID, workRegionID ) )
 					{
-						job.addPossibleWorkPosition( testPos );
+						job->addPossibleWorkPosition( testPos );
 					}
 				}
 			}
 		}
 		//if ( job.possibleWorkPositions().empty() ) qDebug() << "not reachable";
-		return job.possibleWorkPositions().size() > 0;
+		return job->possibleWorkPositions().size() > 0;
 	}
 	return false;
 }
@@ -763,16 +713,13 @@ void JobManager::finishJob( unsigned int jobID )
 {
 	if ( m_jobList.contains( jobID ) )
 	{
-		Job& job = m_jobList[jobID];
+		QSharedPointer<Job> job = m_jobList.value( jobID );
 
-		int rotation = job.rotation();
-		//qDebug() << "finishJob " << job.id() << job.type();
-		QString type = job.type();
-
+		QString type = job->type();
 		setJobSprites( jobID, false, true );
 
 		std::vector<Position> neighs;
-		Position pos = job.pos();
+		Position pos = job->pos();
 
 		neighs.push_back( pos.northOf() );
 		neighs.push_back( pos.eastOf() );
@@ -783,57 +730,44 @@ void JobManager::finishJob( unsigned int jobID )
 
 		for ( auto p : neighs )
 		{
-			if ( m_jobPositions.contains( p.toInt() ) )
+			if ( m_jobPositions.contains( p ) )
 			{
-				unsigned int j = m_jobPositions.value( p.toInt() );
+				unsigned int j = m_jobPositions.value( p );
 
-				if ( isReachable( j, 0 ) && !m_jobList[j].componenentMissing() )
+				if ( isReachable( j, 0 ) && !m_jobList[j]->componentMissing() )
 				{
-					m_jobsPerType[m_jobList[j].type()].insert( m_jobList[j].priority(), j );
+					m_jobsPerType[m_jobList[j]->type()].insert( m_jobList[j]->priority(), j );
 				}
 			}
 		}
 
 		removeFromPositionHash( jobID );
 
-		for ( auto& type : m_jobsPerType )
+		for ( auto& mtype : m_jobsPerType )
 		{
-			type.remove( job.priority(), jobID );
+			mtype.remove( job->priority(), jobID );
 		}
 		m_jobList.remove( jobID );
 	}
-	if ( Global::wsm().finishJob( jobID ) )
+
+	if ( g->spm()->finishJob( jobID ) )
 	{
 		return;
 	}
 
-	if ( Global::spm().finishJob( jobID ) )
-	{
-		return;
-	}
-
-	if ( Global::fm().finishJob( jobID ) )
-	{
-		return;
-	}
-	if ( Global::gm().finishJob( jobID ) )
-	{
-		return;
-	}
-
-	if ( Global::mcm().finishJob( jobID ) )
-	{
-		return;
-	}
 }
 
 void JobManager::setJobSprites( unsigned int jobID, bool busy, bool remove )
 {
 	if ( m_jobList.contains( jobID ) )
 	{
-		Job& job     = m_jobList[jobID];
-		QString type = job.type();
-		int rotation = job.rotation();
+		QSharedPointer<Job> job     = m_jobList.value( jobID );
+		if( !job || job->noJobSprite() )
+		{
+			return;
+		}
+		QString type = job->type();
+		int rotation = job->rotation();
 		QList<QPair<Sprite*, Position>> sprites;
 		QList<QPair<Sprite*, Position>> spritesInv;
 
@@ -842,16 +776,16 @@ void JobManager::setJobSprites( unsigned int jobID, bool busy, bool remove )
 			QList<QVariantMap> components;
 			if ( type == "BuildWall" || type == "BuildFloor" || type == "BuildRamp" || type == "BuildRampCorner" || type == "BuildStairs" )
 			{
-				components = DB::selectRows( "Constructions_Sprites", "ID", job.item() );
+				components = DB::selectRows( "Constructions_Sprites", "ID", job->item() );
 			}
 			else if ( type == "BuildWorkshop" )
 			{
-				components = DB::selectRows( "Workshops_Components", "ID", job.item() );
+				components = DB::selectRows( "Workshops_Components", "ID", job->item() );
 			}
 			else if ( type == "BuildItem" )
 			{
 				QVariantMap sprite;
-				sprite.insert( "SpriteID", DBH::spriteID( job.item() ) );
+				sprite.insert( "SpriteID", DBH::spriteID( job->item() ) );
 				sprite.insert( "Offset", "0 0 0" );
 				sprite.insert( "Type", "Item" );
 				components.push_back( sprite );
@@ -880,7 +814,7 @@ void JobManager::setJobSprites( unsigned int jobID, bool busy, bool remove )
 
 				if ( !cm.value( "SpriteID" ).toString().isEmpty() )
 				{
-					QString mat = job.material();
+					QString mat = job->material();
 					if ( mat == "any" )
 					{
 						mat = "None";
@@ -889,7 +823,7 @@ void JobManager::setJobSprites( unsigned int jobID, bool busy, bool remove )
 					{
 						cm.insert( "SpriteID", cm.value( "SpriteIDOverride" ).toString() );
 					}
-					Sprite* sprite  = Global::sf().createSprite( cm["SpriteID"].toString(), { mat } );
+					Sprite* sprite  = g->sf()->createSprite( cm["SpriteID"].toString(), { mat } );
 					sprite->opacity = 0.5;
 
 					bool isFloor = false;
@@ -912,11 +846,11 @@ void JobManager::setJobSprites( unsigned int jobID, bool busy, bool remove )
 					{
 						if ( remove )
 						{
-							Global::w().clearJobSprite( job.pos() + offset, true );
+							g->w()->clearJobSprite( job->pos() + offset, true );
 						}
 						else
 						{
-							Global::w().setJobSprite( job.pos() + offset, spriteUID, rotation, isFloor, jobID, busy );
+							g->w()->setJobSprite( job->pos() + offset, spriteUID, rotation, isFloor, jobID, busy );
 						}
 					}
 					else
@@ -931,25 +865,25 @@ void JobManager::setJobSprites( unsigned int jobID, bool busy, bool remove )
 							rot = 3;
 						if ( remove )
 						{
-							Global::w().clearJobSprite( job.pos() + offset, false );
+							g->w()->clearJobSprite( job->pos() + offset, false );
 						}
 						else
 						{
-							Global::w().setJobSprite( job.pos() + offset, spriteUID, ( rotation + rot ) % 4, isFloor, jobID, busy );
+							g->w()->setJobSprite( job->pos() + offset, spriteUID, ( rotation + rot ) % 4, isFloor, jobID, busy );
 						}
 					}
 				}
 				else
 				{
-					Sprite* sprite  = Global::sf().createSprite( "SolidSelectionFloor", { "None" } );
+					Sprite* sprite  = g->sf()->createSprite( "SolidSelectionFloor", { "None" } );
 					sprite->opacity = 0.5;
 					if ( remove )
 					{
-						Global::w().clearJobSprite( job.pos() + offset, true );
+						g->w()->clearJobSprite( job->pos() + offset, true );
 					}
 					else
 					{
-						Global::w().setJobSprite( job.pos() + offset, sprite->uID, rotation, true, jobID, busy );
+						g->w()->setJobSprite( job->pos() + offset, sprite->uID, rotation, true, jobID, busy );
 					}
 				}
 			}
@@ -961,13 +895,12 @@ void JobManager::setJobSprites( unsigned int jobID, bool busy, bool remove )
 
 			if ( !spriteIds.empty() )
 			{
-				for ( auto asi : spriteIds )
+				for ( const auto& entry : spriteIds )
 				{
-					QVariantMap entry = asi;
 					if ( !entry.value( "SpriteID" ).toString().isEmpty() )
 					{
 						QString spriteID = entry["SpriteID"].toString();
-						Sprite* sprite   = Global::sf().createSprite( spriteID, { "None" } );
+						Sprite* sprite   = g->sf()->createSprite( spriteID, { "None" } );
 						sprite->opacity  = 0.5;
 						Position offset( 0, 0, 0 );
 						if ( entry.contains( "Offset" ) )
@@ -991,11 +924,11 @@ void JobManager::setJobSprites( unsigned int jobID, bool busy, bool remove )
 						*/
 						if ( remove )
 						{
-							Global::w().clearJobSprite( job.pos() + offset, floor );
+							g->w()->clearJobSprite( job->pos() + offset, floor );
 						}
 						else
 						{
-							Global::w().setJobSprite( job.pos() + offset, spriteUID, rotation, floor, jobID, busy );
+							g->w()->setJobSprite( job->pos() + offset, spriteUID, rotation, floor, jobID, busy );
 						}
 					}
 				}
@@ -1008,51 +941,42 @@ void JobManager::giveBackJob( unsigned int jobID )
 {
 	if ( m_jobList.contains( jobID ) )
 	{
-		Job& job = m_jobList[jobID];
+		QSharedPointer<Job> job = m_jobList.value( jobID );
 
-		if ( job.isCanceled() || job.destroyOnAbort() )
+		if ( job->isCanceled() || job->destroyOnAbort() )
 		{
-			job.setIsWorked( false );
-			cancelJob( job.pos() );
+			job->setIsWorked( false );
+			cancelJob( job->pos() );
 			return;
 		}
 
+		if( job->type() == "LeadAnimalToPasture" || job->type() == "ButcherAnimal" || job->type() == "HarvestAnimal" )
+		{
+			if( job->animal() == 0 )
+			{
+				job->setIsWorked( false );
+				cancelJob( job->pos() );
+				return;
+			}
+		}
+
 		//TODO clear stockpile reserve
-		job.setIsWorked( false );
-		job.setWorkedBy( 0 );
-		job.clearPossibleWorkPositions();
-		job.setComponentMissing( true );
+		job->setIsWorked( false );
+		job->setWorkedBy( 0 );
+		job->clearPossibleWorkPositions();
+		job->setComponentMissing( true );
 
 		for ( auto& type : m_jobsPerType )
 		{
-			type.remove( job.priority(), jobID );
+			type.remove( job->priority(), jobID );
 		}
-		//QMutexLocker lock( &m_mutex );
 		setJobSprites( jobID, false, false );
+
 		m_returnedJobQueue.enqueue( jobID );
-		//lock.unlock();
-		return;
-	}
-	if ( Global::wsm().giveBackJob( jobID ) )
-	{
 		return;
 	}
 
-	if ( Global::spm().giveBackJob( jobID ) )
-	{
-		return;
-	}
-
-	if ( Global::fm().giveBackJob( jobID ) )
-	{
-		return;
-	}
-	if ( Global::gm().giveBackJob( jobID ) )
-	{
-		return;
-	}
-
-	if ( Global::mcm().giveBackJob( jobID ) )
+	if ( g->spm()->giveBackJob( jobID ) )
 	{
 		return;
 	}
@@ -1061,26 +985,26 @@ void JobManager::giveBackJob( unsigned int jobID )
 void JobManager::cancelJob( const Position& pos )
 {
 	unsigned int jobID = 0;
-	if ( m_jobPositions.contains( pos.toInt() ) )
+	if ( m_jobPositions.contains( pos ) )
 	{
-		jobID = m_jobPositions.value( pos.toInt() );
+		jobID = m_jobPositions.value( pos );
 	}
 	else
 	{
-		jobID = Global::w().jobSprite( pos ).value( "JobID" ).toUInt();
+		jobID = g->w()->jobSprite( pos ).value( "JobID" ).toUInt();
 	}
 
-	if ( jobID != 0 )
+	if ( jobID != 0 && m_jobList.contains( jobID ) )
 	{
-		if ( m_jobList[jobID].isWorked() )
+		if ( m_jobList.value( jobID )->isWorked() )
 		{
-			m_jobList[jobID].setCanceled();
+			m_jobList.value( jobID )->setCanceled();
 		}
 		else
 		{
-			Job& job = m_jobList[jobID];
+			QSharedPointer<Job> job = m_jobList.value( jobID );
 
-			if ( job.type() == "SoundAlarm" )
+			if ( job->type() == "SoundAlarm" )
 			{
 				GameState::alarm       = 0;
 				GameState::alarmRoomID = 0;
@@ -1088,14 +1012,61 @@ void JobManager::cancelJob( const Position& pos )
 
 			setJobSprites( jobID, false, true );
 
-			QMutexLocker lock( &m_mutex );
 			removeFromPositionHash( jobID );
 			for ( auto& type : m_jobsPerType )
 			{
-				type.remove( job.priority(), jobID );
+				type.remove( job->priority(), jobID );
 			}
 			m_jobList.remove( jobID );
 		}
+	}
+}
+
+void JobManager::deleteJob( unsigned int jobID )
+{
+	if ( jobID != 0 && m_jobList.contains( jobID ) )
+	{
+		if ( m_jobList.value( jobID )->isWorked() )
+		{
+			m_jobList.value( jobID )->setCanceled();
+		}
+		else
+		{
+			QSharedPointer<Job> job = m_jobList.value( jobID );
+
+			if ( job->type() == "SoundAlarm" )
+			{
+				GameState::alarm       = 0;
+				GameState::alarmRoomID = 0;
+			}
+
+			setJobSprites( jobID, false, true );
+
+			removeFromPositionHash( jobID );
+			for ( auto& type : m_jobsPerType )
+			{
+				type.remove( job->priority(), jobID );
+			}
+			m_jobList.remove( jobID );
+		}
+	}
+}
+
+void JobManager::deleteJobAt( const Position& pos )
+{
+	unsigned int jobID = 0;
+	if ( m_jobPositions.contains( pos ) )
+	{
+		jobID = m_jobPositions.value( pos );
+	}
+	else
+	{
+		jobID = g->w()->jobSprite( pos ).value( "JobID" ).toUInt();
+	}
+
+	if ( jobID != 0 && m_jobList.contains( jobID ) )
+	{
+		deleteJob( jobID );
 	}
 }
 
@@ -1110,27 +1081,27 @@ QString JobManager::jobManagerInfo()
 void JobManager::raisePrio( Position& pos )
 {
 	unsigned int jobID = 0;
-	if ( m_jobPositions.contains( pos.toInt() ) )
+	if ( m_jobPositions.contains( pos ) )
 	{
-		jobID = m_jobPositions.value( pos.toInt() );
+		jobID = m_jobPositions.value( pos );
 	}
 	else
 	{
-		jobID = Global::w().jobSprite( pos ).value( "JobID" ).toUInt();
+		jobID = g->w()->jobSprite( pos ).value( "JobID" ).toUInt();
 	}
 
 	if ( jobID != 0 )
 	{
-		Job& job = m_jobList[jobID];
-		if ( job.priority() < 9 )
+		QSharedPointer<Job> job = m_jobList.value( jobID );
+		if ( job->priority() < 9 )
 		{
-			if ( m_jobsPerType[job.type()].count( job.priority(), job.id() ) )
+			if ( m_jobsPerType[job->type()].count( job->priority(), job->id() ) )
 			{
 				//job is in m_jobsPerType so move it
-				m_jobsPerType[job.type()].remove( job.priority(), job.id() );
-				m_jobsPerType[job.type()].insert( job.priority() + 1, job.id() );
+				m_jobsPerType[job->type()].remove( job->priority(), job->id() );
+				m_jobsPerType[job->type()].insert( job->priority() + 1, job->id() );
 			}
-			job.raisePrio();
+			job->raisePrio();
 		}
 	}
 }
@@ -1138,27 +1109,27 @@ void JobManager::raisePrio( Position& pos )
 void JobManager::lowerPrio( Position& pos )
 {
 	unsigned int jobID = 0;
-	if ( m_jobPositions.contains( pos.toInt() ) )
+	if ( m_jobPositions.contains( pos ) )
 	{
-		jobID = m_jobPositions.value( pos.toInt() );
+		jobID = m_jobPositions.value( pos );
 	}
 	else
 	{
-		jobID = Global::w().jobSprite( pos ).value( "JobID" ).toUInt();
+		jobID = g->w()->jobSprite( pos ).value( "JobID" ).toUInt();
 	}
 
 	if ( jobID != 0 )
 	{
-		Job& job = m_jobList[jobID];
-		if ( job.priority() > 0 )
+		QSharedPointer<Job> job = m_jobList.value( jobID );
+		if ( job->priority() > 0 )
 		{
-			if ( m_jobsPerType[job.type()].count( job.priority(), job.id() ) )
+			if ( m_jobsPerType[job->type()].count( job->priority(), job->id() ) )
 			{
 				//job is in m_jobsPerType so move it
-				m_jobsPerType[job.type()].remove( job.priority(), job.id() );
-				m_jobsPerType[job.type()].insert( job.priority() - 1, job.id() );
+				m_jobsPerType[job->type()].remove( job->priority(), job->id() );
+				m_jobsPerType[job->type()].insert( job->priority() - 1, job->id() );
 			}
-			job.lowerPrio();
+			job->lowerPrio();
 		}
 	}
 }

@@ -22,6 +22,7 @@
 #include "../base/gamestate.h"
 #include "../base/global.h"
 #include "../base/util.h"
+#include "../game/game.h"
 #include "../game/farmingmanager.h"
 #include "../game/job.h"
 #include "../game/jobmanager.h"
@@ -36,11 +37,13 @@
 #include <QJsonDocument>
 #include <QJsonValue>
 
-Selection::Selection() :
+Selection::Selection( Game* game ) :
+	g( game ),
 	m_rotation( 0 ),
 	m_firstClicked( false ),
 	m_action( "" ),
-	m_debug( false )
+	m_debug( false ),
+	QObject( game )
 {
 	m_selectionSize.first  = 0;
 	m_selectionSize.second = 0;
@@ -56,6 +59,7 @@ Selection::Selection() :
 	m_reqMap.insert( "Stockpile", SEL_STOCKPILE );
 	m_reqMap.insert( "Room", SEL_ROOM );
 	m_reqMap.insert( "AllowBell", SEL_ALLOW_BELL );
+	m_reqMap.insert( "AllowFurniture", SEL_ALLOW_FURNITURE );
 	m_reqMap.insert( "Pasture", SEL_PASTURE );
 	m_reqMap.insert( "Walkable", SEL_WALKABLE );
 	m_reqMap.insert( "Mechanism", SEL_MECHANISM );
@@ -111,7 +115,11 @@ void Selection::clear()
 	m_isFloor              = false;
 	m_isMulti              = false;
 	m_tileCheckList.clear();
+	m_item = "";
+	m_materials.clear();
 	m_canRotate = false;
+
+	emit signalActionChanged( "" );
 }
 
 void Selection::rotate()
@@ -130,21 +138,25 @@ bool Selection::leftClick( Position& pos, bool shift, bool ctrl )
 		m_firstClick          = pos;
 		m_firstClicked        = true;
 		QVariantMap actionMap = DB::selectRow( "Actions", m_action );
-		m_isFloor             = DB::select( "IsFloor", "Actions", m_action ).toBool();
-		m_isMulti             = DB::select( "Multi", "Actions", m_action ).toBool();
+		m_isFloor             = actionMap.value( "IsFloor" ).toBool();
+		m_isMulti             = actionMap.value( "Multi" ).toBool();
 		if ( m_action == "BuildItem" && DB::select( "IsContainer", "Items", m_item ).toBool() )
 		{
 			m_isMulti = true;
 		}
 
-		m_isMultiZ  = DB::select( "MultiZ", "Actions", m_action ).toBool();
-		m_canRotate = DB::select( "Rotate", "Actions", m_action ).toBool();
+		m_isMultiZ  = actionMap.value( "MultiZ" ).toBool();
+		m_canRotate = actionMap.value( "Rotate" ).toBool();
 		m_selection.push_back( QPair<Position, bool>( pos, testTileForJobSelection( pos ) ) );
+		
+		emit signalFirstClick( m_firstClick.toString() );
+
 		if ( !m_isMulti && !shift )
 		{
 			onSecondClick( shift, ctrl );
 			m_firstClicked = false;
 			m_changed      = true;
+			updateSelection( pos, shift, ctrl );
 			return true;
 		}
 		return false;
@@ -156,6 +168,9 @@ bool Selection::leftClick( Position& pos, bool shift, bool ctrl )
 		onSecondClick( shift, ctrl );
 		m_firstClicked = false;
 		m_changed      = true;
+		emit signalFirstClick( "" );
+		emit signalSize( "" );
+		updateSelection( pos, shift, ctrl );
 		return true;
 	}
 }
@@ -170,10 +185,12 @@ void Selection::setAction( QString action )
 	m_action              = action;
 	QVariantMap actionMap = DB::selectRow( "Actions", m_action );
 
-	m_isFloor   = DB::select( "IsFloor", "Actions", m_action ).toBool();
-	m_isMulti   = DB::select( "Multi", "Actions", m_action ).toBool();
-	m_isMultiZ  = DB::select( "MultiZ", "Actions", m_action ).toBool();
-	m_canRotate = DB::select( "Rotate", "Actions", m_action ).toBool();
+	m_isFloor   = actionMap.value( "IsFloor" ).toBool();
+	m_isMulti   = actionMap.value( "Multi" ).toBool();
+	m_isMultiZ  = actionMap.value( "MultiZ" ).toBool();
+	m_canRotate = actionMap.value( "Rotate" ).toBool();
+
+	emit signalActionChanged( m_action );
 }
 
 void Selection::updateSelection( Position& pos, bool shift, bool ctrl )
@@ -248,6 +265,16 @@ void Selection::updateSelection( Position& pos, bool shift, bool ctrl )
 			}
 		}
 	}
+
+	if( m_firstClicked )
+	{
+		emit signalSize( QString::number( m_selectionSize.first ) + " x " + QString::number( m_selectionSize.second ) );
+	}
+	else
+	{
+		emit signalSize( "" );
+	}
+
 	m_changed = true;
 }
 
@@ -261,19 +288,21 @@ void Selection::rightClick( Position& pos )
 		m_firstClicked         = false;
 		m_selectionSize.first  = 0;
 		m_selectionSize.second = 0;
-		m_isFloor              = actionMap.value( "Floor" ).toBool();
 	}
 	else
 	{
 		clear();
 	}
+
+	emit signalFirstClick( "" );
+	emit signalSize( "" );
+		
 	m_changed = true;
 }
 
 bool Selection::testTileForJobSelection( const Position& pos )
 {
 	// TODO cache plants and posID and make it faster :)
-	World& world = Global::w();
 	Tile* tile;
 	int dim = Global::dimX;
 
@@ -330,16 +359,20 @@ bool Selection::testTileForJobSelection( const Position& pos )
 			}
 
 			testPos = Position( pos.x + offset.x, pos.y + offset.y, pos.z + offset.z );
-			if ( testPos.x < 0 || testPos.x >= dim || testPos.y < 0 || testPos.y >= dim )
+			if ( !testPos.valid() )
 			{
 				return false;
 			}
-			tile = &world.getTile( testPos );
+			tile = &g->w()->getTile( testPos );
 		}
 		else
 		{
 			testPos = pos;
-			tile    = &world.getTile( pos );
+			if ( !testPos.valid() )
+			{
+				return false;
+			}
+			tile    = &g->w()->getTile( pos );
 		}
 
 		QStringList required = tm.value( "Required" ).toString().split( "|" );
@@ -351,10 +384,15 @@ bool Selection::testTileForJobSelection( const Position& pos )
 				required.append( "Floor" );
 			}
 		}
+		if( Global::debugMode)
+		{
+			qDebug() << testPos.toString() << QString::number( (quint64)tile->flags, 16 ) << tile->wallType << tile->floorType;
+		}
+
 		for ( auto req : required )
 		{
-			if ( Global::debugMode )
-				qDebug() << "test requirement: " << req << "...";
+			//if ( Global::debugMode )
+			//	qDebug() << "test requirement: " << req << "...";
 			switch ( m_reqMap.value( req ) )
 			{
 				case SEL_NONE:
@@ -376,19 +414,19 @@ bool Selection::testTileForJobSelection( const Position& pos )
 						return false;
 					break;
 				case SEL_CONSTRUCTION:
-					if ( !( (bool)( tile->wallType & WallType::WT_CONSTRUCTED ) || (bool)( tile->floorType & FloorType::FT_CONSTRUCTION ) ) && !Global::mcm().hasMechanism( pos ) )
+					if ( !( (bool)( tile->wallType & WallType::WT_CONSTRUCTED ) || (bool)( tile->floorType & FloorType::FT_CONSTRUCTION ) ) && !g->mcm()->hasMechanism( pos ) )
 						return false;
 					break;
 				case SEL_MECHANISM:
-					if ( !Global::mcm().hasMechanism( pos ) )
+					if ( !g->mcm()->hasMechanism( pos ) )
 						return false;
 					break;
 				case SEL_GEARBOX:
-					if ( !Global::mcm().hasGearBox( pos ) )
+					if ( !g->mcm()->hasGearBox( pos ) )
 						return false;
 					break;
 				case SEL_JOB:
-					if ( !world.hasJob( testPos ) )
+					if ( !g->w()->hasJob( testPos ) )
 						return false;
 					break;
 				case SEL_DESIGNATION:
@@ -404,7 +442,11 @@ bool Selection::testTileForJobSelection( const Position& pos )
 						return false;
 					break;
 				case SEL_ALLOW_BELL:
-					if ( !( tile->flags & TileFlag::TF_ROOM ) || !Global::rm().allowBell( testPos ) )
+					if ( !( tile->flags & TileFlag::TF_ROOM ) || !g->rm()->allowBell( testPos ) )
+						return false;
+					break;
+				case SEL_ALLOW_FURNITURE:
+					if ( ( tile->flags & ( TileFlag::TF_STOCKPILE + TileFlag::TF_GROVE + TileFlag::TF_FARM + TileFlag::TF_PASTURE + TileFlag::TF_NOPASS ) ) )
 						return false;
 					break;
 				case SEL_PASTURE:
@@ -433,8 +475,9 @@ bool Selection::testTileForJobSelection( const Position& pos )
 					break;
 				case SEL_SOIL:
 				{
-					unsigned short matUID = tile->floorMaterial;
-					if ( DB::select( "Type", "Materials", matUID ).toString() != "Soil" )
+					QString matSID = DBH::materialSID( tile->floorMaterial );
+
+					if ( DB::select( "Type", "Materials", matSID ).toString() != "Soil" )
 					{
 						return false;
 					}
@@ -443,9 +486,9 @@ bool Selection::testTileForJobSelection( const Position& pos )
 				case SEL_TREE:
 				{
 					bool isTree = false;
-					if ( world.plants().contains( testPos.toInt() ) )
+					if ( g->w()->plants().contains( testPos.toInt() ) )
 					{ // need to guard [] access otherwise it constructs a default object for that location and furth checks fails
-						isTree = world.plants()[testPos.toInt()].isTree();
+						isTree = g->w()->plants()[testPos.toInt()].isTree();
 					}
 					if ( !isTree )
 						return false;
@@ -454,9 +497,9 @@ bool Selection::testTileForJobSelection( const Position& pos )
 				case SEL_PLANT:
 				{
 					bool isPlant = false;
-					if ( world.plants().contains( testPos.toInt() ) )
+					if ( g->w()->plants().contains( testPos.toInt() ) )
 					{ // need to guard [] access otherwise it constructs a default object for that location and further checks fail
-						isPlant = world.plants()[testPos.toInt()].isPlant();
+						isPlant = g->w()->plants()[testPos.toInt()].isPlant();
 					}
 					if ( !isPlant )
 						return false;
@@ -466,7 +509,7 @@ bool Selection::testTileForJobSelection( const Position& pos )
 					break;
 				case SEL_PLANT_WITH_FRUIT:
 				{
-					if ( !( world.plants().contains( testPos.toInt() ) && world.plants()[testPos.toInt()].harvestable() ) )
+					if ( !( g->w()->plants().contains( testPos.toInt() ) && g->w()->plants()[testPos.toInt()].harvestable() ) )
 					{
 						return false;
 					}
@@ -474,8 +517,8 @@ bool Selection::testTileForJobSelection( const Position& pos )
 				break;
 			}
 
-			if ( Global::debugMode )
-				qDebug() << "passed.";
+			//if ( Global::debugMode )
+			//	qDebug() << "passed.";
 		}
 
 		QStringList forbidden = tm.value( "Forbidden" ).toString().split( "|" );
@@ -485,8 +528,8 @@ bool Selection::testTileForJobSelection( const Position& pos )
 		}
 		for ( auto forb : forbidden )
 		{
-			if ( Global::debugMode )
-				qDebug() << "test forbidden: " << forb << "...";
+			//if ( Global::debugMode )
+			//	qDebug() << "test forbidden: " << forb << "...";
 			if ( m_action.startsWith( "Build" ) && tile->flags & TileFlag::TF_OCCUPIED )
 			{
 				return false;
@@ -514,10 +557,11 @@ bool Selection::testTileForJobSelection( const Position& pos )
 						return false;
 					break;
 				case SEL_MECHANISM:
-					if ( Global::mcm().hasMechanism( pos ) )
+					if ( g->mcm()->hasMechanism( pos ) )
 						return false;
+					break;
 				case SEL_JOB:
-					if ( world.hasJob( testPos ) )
+					if ( g->w()->hasJob( testPos ) )
 						return false;
 					break;
 				case SEL_DESIGNATION:
@@ -532,6 +576,9 @@ bool Selection::testTileForJobSelection( const Position& pos )
 					if ( tile->flags & TileFlag::TF_ROOM )
 						return false;
 					break;
+				case SEL_PASTURE:
+					if ( tile->flags & TileFlag::TF_PASTURE )
+						return false;
 				case SEL_STAIRS:
 					if ( (bool)( tile->wallType & WallType::WT_STAIR ) )
 						return false;
@@ -550,8 +597,8 @@ bool Selection::testTileForJobSelection( const Position& pos )
 					break;
 				case SEL_SOIL:
 				{
-					unsigned short matUID = tile->floorMaterial;
-					if ( DB::select( "Type", "Materials", matUID ).toString() == "Soil" )
+					QString matSID = DBH::materialSID( tile->floorMaterial );
+					if ( DB::select( "Type", "Materials", matSID ).toString() == "Soil" )
 					{
 						return false;
 					}
@@ -560,9 +607,9 @@ bool Selection::testTileForJobSelection( const Position& pos )
 				case SEL_TREE:
 				{
 					bool isTree = false;
-					if ( world.plants().contains( testPos.toInt() ) )
+					if ( g->w()->plants().contains( testPos.toInt() ) )
 					{ // need to guard [] access otherwise it constructs a default object for that location and furth checks fails
-						isTree = world.plants()[testPos.toInt()].isTree();
+						isTree = g->w()->plants()[testPos.toInt()].isTree();
 					}
 					if ( isTree )
 						return false;
@@ -571,9 +618,9 @@ bool Selection::testTileForJobSelection( const Position& pos )
 				case SEL_PLANT:
 				{
 					bool isPlant = false;
-					if ( world.plants().contains( testPos.toInt() ) )
+					if ( g->w()->plants().contains( testPos.toInt() ) )
 					{ // need to guard [] access otherwise it constructs a default object for that location and further checks fail
-						isPlant = world.plants()[testPos.toInt()].isPlant();
+						isPlant = g->w()->plants()[testPos.toInt()].isPlant();
 					}
 					if ( isPlant )
 						return false;
@@ -588,7 +635,7 @@ bool Selection::testTileForJobSelection( const Position& pos )
 						return false;
 					}
 
-					if ( !world.noTree( testPos, 2, 2 ) )
+					if ( !g->w()->noTree( testPos, 2, 2 ) )
 					{
 						return false;
 					}
@@ -596,7 +643,7 @@ bool Selection::testTileForJobSelection( const Position& pos )
 				break;
 				case SEL_PLANT_WITH_FRUIT:
 				{
-					if ( world.plants().contains( testPos.toInt() ) && world.plants()[testPos.toInt()].harvestable() )
+					if ( g->w()->plants().contains( testPos.toInt() ) && g->w()->plants()[testPos.toInt()].harvestable() )
 					{
 						return false;
 					}
@@ -605,17 +652,17 @@ bool Selection::testTileForJobSelection( const Position& pos )
 				case SEL_ANYWALL:
 					if ( tile->wallType )
 						return false;
-					if ( world.plants().contains( testPos.toInt() ) )
+					if ( g->w()->plants().contains( testPos.toInt() ) )
 						return false;
 					if ( tile->flags & ( TileFlag::TF_STOCKPILE + TileFlag::TF_GROVE + TileFlag::TF_FARM + TileFlag::TF_ROOM + TileFlag::TF_NOPASS ) )
 						return false;
-					if ( world.hasJob( testPos ) )
+					if ( g->w()->hasJob( testPos ) )
 						return false;
 					break;
 			}
 
-			if ( Global::debugMode )
-				qDebug() << "passed.";
+			//if ( Global::debugMode )
+			//	qDebug() << "passed.";
 		}
 	}
 
@@ -631,7 +678,7 @@ void Selection::onSecondClick( bool shift, bool ctrl )
 		{
 			if ( p.second )
 			{
-				Global::w().removeDesignation( p.first );
+				g->w()->removeDesignation( p.first );
 			}
 		}
 		return;
@@ -643,7 +690,7 @@ void Selection::onSecondClick( bool shift, bool ctrl )
 		{
 			if ( p.second )
 			{
-				Global::jm().cancelJob( p.first );
+				g->jm()->cancelJob( p.first );
 			}
 		}
 		return;
@@ -655,7 +702,7 @@ void Selection::onSecondClick( bool shift, bool ctrl )
 		{
 			if ( p.second )
 			{
-				Global::jm().raisePrio( p.first );
+				g->jm()->raisePrio( p.first );
 			}
 		}
 		return;
@@ -666,7 +713,7 @@ void Selection::onSecondClick( bool shift, bool ctrl )
 		{
 			if ( p.second )
 			{
-				Global::jm().lowerPrio( p.first );
+				g->jm()->lowerPrio( p.first );
 			}
 		}
 		return;
@@ -674,32 +721,47 @@ void Selection::onSecondClick( bool shift, bool ctrl )
 
 	if ( m_action == "CreateStockpile" )
 	{
-		Global::spm().addStockpile( m_firstClick, m_selection );
+		g->spm()->addStockpile( m_firstClick, m_selection );
 		return;
 	}
 	if ( m_action == "CreateGrove" )
 	{
-		Global::fm().addGrove( m_firstClick, m_selection );
+		g->fm()->addGrove( m_firstClick, m_selection );
 		return;
 	}
 	if ( m_action == "CreateFarm" )
 	{
-		Global::fm().addFarm( m_firstClick, m_selection );
+		g->fm()->addFarm( m_firstClick, m_selection );
 		return;
 	}
 	if ( m_action == "CreatePasture" )
 	{
-		Global::fm().addPasture( m_firstClick, m_selection );
+		g->fm()->addPasture( m_firstClick, m_selection );
 		return;
 	}
 	if ( m_action == "CreateRoom" )
 	{
-		Global::rm().addRoom( m_firstClick, m_selection );
+		g->rm()->addRoom( m_firstClick, m_selection, RoomType::PersonalRoom );
+		return;
+	}
+	if ( m_action == "CreateDorm" )
+	{
+		g->rm()->addRoom( m_firstClick, m_selection, RoomType::Dorm );
+		return;
+	}
+	if ( m_action == "CreateDining" )
+	{
+		g->rm()->addRoom( m_firstClick, m_selection, RoomType::Dining );
+		return;
+	}
+	if ( m_action == "CreateHospital" )
+	{
+		g->rm()->addRoom( m_firstClick, m_selection, RoomType::Hospital );
 		return;
 	}
 	if ( m_action == "CreateNoPass" )
 	{
-		Global::rm().addNoPass( m_firstClick, m_selection );
+		g->rm()->addNoPass( m_firstClick, m_selection );
 		return;
 	}
 	QString jobId = DB::select( "Job", "Actions", m_action ).toString();
@@ -714,7 +776,7 @@ void Selection::onSecondClick( bool shift, bool ctrl )
 	{
 		for ( auto m : m_materials )
 		{
-			vUMats.push_back( DBH::rowID( "Materials", m ) );
+			vUMats.push_back( DBH::materialUID( m ) );
 		}
 		if ( m_isMulti )
 		{
@@ -722,7 +784,7 @@ void Selection::onSecondClick( bool shift, bool ctrl )
 			{
 				if ( p.second )
 				{
-					Global::w().construct( m_item, p.first, 0, Util::variantList2UInt( vUMats ), p.first );
+					g->w()->construct( m_item, p.first, 0, Global::util->variantList2UInt( vUMats ), p.first );
 				}
 			}
 		}
@@ -744,7 +806,7 @@ void Selection::onSecondClick( bool shift, bool ctrl )
 				if ( p.second )
 				{
 					//if tile belongs to workshop, put in workshop set, else add position to newList
-					auto ws = Global::wsm().workshopAt( p.first );
+					auto ws = g->wsm()->workshopAt( p.first );
 					if ( ws )
 					{
 						if ( !workshops.contains( ws->id() ) )
@@ -763,7 +825,7 @@ void Selection::onSecondClick( bool shift, bool ctrl )
 			{
 				if ( p.second )
 				{
-					Global::jm().addJob( jobId, p.first, m_rotation );
+					g->jm()->addJob( jobId, p.first, m_rotation );
 				}
 			}
 
@@ -779,13 +841,13 @@ void Selection::onSecondClick( bool shift, bool ctrl )
 					{
 						if ( Global::debugMode )
 							qDebug() << "Selection::onSecondclick1" << jobId << p.first.toString() << m_item << m_materials << m_rotation;
-						Global::jm().addJob( jobId, p.first, m_rotation );
+						g->jm()->addJob( jobId, p.first, m_rotation );
 					}
 					else
 					{
 						if ( Global::debugMode )
 							qDebug() << "Selection::onSecondclick2" << jobId << p.first.toString() << m_item << m_materials << m_rotation;
-						Global::jm().addJob( jobId, p.first, m_item, m_materials, m_rotation );
+						g->jm()->addJob( jobId, p.first, m_item, m_materials, m_rotation );
 					}
 				}
 			}
@@ -795,20 +857,20 @@ void Selection::onSecondClick( bool shift, bool ctrl )
 	{
 		if ( !m_selection.empty() )
 		{
-			auto&& p = m_selection.first();
+			auto& p = m_selection.first();
 			if ( p.second )
 			{
 				if ( m_materials.empty() )
 				{
 					if ( Global::debugMode )
 						qDebug() << jobId << p.first.toString() << m_item << m_materials << m_rotation;
-					Global::jm().addJob( jobId, p.first, m_rotation );
+					g->jm()->addJob( jobId, p.first, m_rotation );
 				}
 				else
 				{
 					if ( Global::debugMode )
 						qDebug() << jobId << p.first.toString() << m_item << m_materials << m_rotation;
-					Global::jm().addJob( jobId, p.first, m_item, m_materials, m_rotation );
+					g->jm()->addJob( jobId, p.first, m_item, m_materials, m_rotation );
 				}
 				p.second = false;
 			}
@@ -828,28 +890,15 @@ int Selection::rotation()
 	}
 }
 
-void Selection::setNetworkCommand( QVariantMap data )
-{
-	m_rotation        = data.value( "Rot" ).toInt();
-	m_firstClick      = Position( data.value( "Pos" ).toString() );
-	m_action          = data.value( "Action" ).toString();
-	m_item            = data.value( "Item" ).toString();
-	m_materials       = data.value( "Mats" ).toString().split( "_" );
-	QVariantList sels = data.value( "Selection" ).toList();
-	m_selection.clear();
-	QVariantMap actionMap = DB::selectRow( "Actions", m_action );
-
-	for ( auto sel : sels )
-	{
-		m_selection.push_back( QPair<Position, bool>( Position( sel.toString() ), testTileForJobSelection( Position( sel.toString() ) ) ) );
-	}
-	onSecondClick( false, false );
-	m_firstClicked = false;
-}
-
 bool Selection::changed()
 {
 	bool out  = m_changed;
 	m_changed = false;
 	return out;
+}
+
+void Selection::updateGui()
+{
+	emit signalActionChanged( "" );
+	emit signalSize( "" );
 }

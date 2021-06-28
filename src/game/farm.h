@@ -19,6 +19,7 @@
 
 #include "../base/position.h"
 #include "../game/worldobject.h"
+#include "../game/job.h"
 
 #include <QHash>
 #include <QList>
@@ -26,12 +27,15 @@
 #include <QPair>
 #include <QVariantMap>
 
-class Job;
+class Game;
 
 struct FarmField
 {
+	FarmField() = default;
+	FarmField(const Position& pos, const QSharedPointer<Job>& job) : pos(pos), job(job) {}
+
 	Position pos;
-	bool hasJob = false;
+	QWeakPointer<Job> job;
 };
 
 enum FarmJobs : quint8
@@ -64,7 +68,7 @@ struct FarmProperties
 	unsigned int autoHarvestItem2Min = 0;
 	unsigned int autoHarvestItem2Max = 0;
 
-	void serialize( QVariantMap& out );
+	void serialize( QVariantMap& out ) const;
 	FarmProperties() {};
 	FarmProperties( QVariantMap& in );
 };
@@ -72,34 +76,29 @@ struct FarmProperties
 class Farm : public WorldObject
 {
 	friend class AggregatorAgri;
-
+	Q_DISABLE_COPY_MOVE( Farm )
 public:
-	Farm();
-	Farm( QList<QPair<Position, bool>> tiles );
-	Farm( QVariantMap vals );
+	Farm() = delete;
+	Farm( QList<QPair<Position, bool>> tiles, Game* game );
+	Farm( QVariantMap vals, Game* game );
 	~Farm();
 
-	QVariant serialize();
+	QVariant serialize() const;
 
-	QString plantType()
+	QString plantType() const
 	{
 		return m_properties.plantType;
 	}
-	bool harvest()
+
+	bool harvest() const
 	{
 		return m_properties.harvest;
 	}
 
 	void onTick( quint64 tick );
 
-	unsigned int getJob( unsigned int gnomeID, QString skillID );
-	bool finishJob( unsigned int jobID );
-	bool giveBackJob( unsigned int jobID );
-	Job* getJob( unsigned int jobID );
-	bool hasJobID( unsigned int jobID );
-
-	bool removeTile( Position& pos );
-	void addTile( Position& pos );
+	bool removeTile( const Position & pos );
+	void addTile( const Position & pos );
 
 	void getInfo( int& numPlots, int& tilled, int& planted, int& ready );
 
@@ -112,15 +111,9 @@ public:
 private:
 	FarmProperties m_properties;
 
-	QMap<unsigned int, FarmField*> m_fields;
-
-	QMap<unsigned int, Job*> m_jobsOut;
+	QMap<unsigned int, FarmField> m_fields;
 
 	void updateAutoFarmer();
-
-	Job* getPlantJob();
-	Job* getTillJob();
-	Job* getHarvestJob();
 
 	FarmProperties& properties()
 	{

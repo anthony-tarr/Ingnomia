@@ -15,59 +15,34 @@
     You should have received a copy of the GNU Affero General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
+#pragma once
 
-#ifndef NetworkClient_H_
-#define NetworkClient_H_
+#include "../aggregatorinventory.h"
+#include "inventorymodel.h"
 
-#include <QMutex>
-#include <QTcpServer>
-#include <QTcpSocket>
-#include <QTimer>
+#include <QObject>
 
-class NetworkClient : public QObject
+class InventoryProxy : public QObject
 {
 	Q_OBJECT
+
 public:
-	NetworkClient();
-	~NetworkClient();
+	InventoryProxy( QObject* parent = nullptr );
+	void setParent( IngnomiaGUI::InventoryModel* parent );
 
-	bool init();
+    void requestCategories();
 
-	void reset();
-
-	bool join();
-
-	void update();
+    void setActive( bool active, const GuiWatchedItem& gwi );
 
 private:
-	QMutex m_mutex;
+	IngnomiaGUI::InventoryModel* m_parent = nullptr;
 
-	QTimer* m_timer;
 
-	bool m_allowNetwork;
-
-	QTcpSocket* m_tcpSocket;
-
-	QByteArray m_buffer;
-	QString m_command;
-
-	bool m_worldReceiveMode;
-	int m_worldBufferSize;
-	int m_worldBufferSizeCompressed;
-
-	void sendCommand( QString& command );
-	void executeCommand( QString& command );
-
-	void uncompressWorld();
-	void processJSONCommand( QString& command );
-	void processChangeCommand( QString& command );
 
 private slots:
-	void networkError( QAbstractSocket::SocketError socketError );
-	void onConnected();
+    void onCategoryUpdate( const QList<GuiInventoryCategory>& categories );
 
 signals:
-	void joinFinished();
+    void signalRequestCategories();
+    void signalSetActive( bool active, const GuiWatchedItem& gwi );
 };
-
-#endif /* NetworkClient_H_ */

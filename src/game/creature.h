@@ -26,6 +26,7 @@
 #include <QPixmap>
 
 class QPainter;
+class Game;
 
 struct AggroEntry
 {
@@ -85,6 +86,7 @@ struct EquipmentItem
 	QString material        = "";
 	unsigned int itemID     = 0;
 	unsigned int materialID = 0;
+	QStringList allMats;
 
 	QVariantMap serialize();
 	EquipmentItem( const QVariantMap& in );
@@ -126,8 +128,8 @@ struct Equipment
 class Creature : public Object
 {
 public:
-	Creature( const Position& pos, QString name, Gender gender, QString species );
-	Creature( QVariantMap in );
+	Creature( const Position& pos, QString name, Gender gender, QString species, Game* game );
+	Creature( QVariantMap in, Game* game );
 	~Creature();
 
 	bool operator<( const Creature& other ) const
@@ -141,7 +143,7 @@ public:
 
 	virtual void updateSprite() = 0;
 
-	void forceMove( Position& to );
+	void forceMove( const Position& to );
 
 	virtual CreatureTickResult onTick( quint64 tickNumber, bool seasonChanged, bool dayChanged, bool hourChanged, bool minuteChanged ) = 0;
 
@@ -164,8 +166,6 @@ public:
 	void setSpriteUID( QString name, unsigned int spriteUID );
 	unsigned int spriteUID( QString name ) const;
 	unsigned int spriteUID() const;
-
-	void setNetworkMove( Position& newPos, int facing );
 
 	bool renderParamsChanged();
 
@@ -216,7 +216,7 @@ public:
 	void setCurrentTarget( Position pos );
 	Position currentTarget() const;
 
-	bool kill();
+	bool kill( bool nocorpse );
 	virtual bool attack( DamageType dt, AnatomyHeight da, int skill, int strength, Position sourcePos, unsigned int attackerID ) = 0;
 
 	QString thoughtBubble() const;
@@ -276,7 +276,13 @@ public:
 	bool isAnimal() { return m_type == CreatureType::ANIMAL; }
 	bool isMonster() { return m_type == CreatureType::MONSTER; }
 
+	bool hasTransparency() { return m_hasTransparency; }
+
+	bool equipmentChanged();
+
 protected:
+	QPointer<Game> g;
+
 	virtual void loadBehaviorTree( QString id ) final;
 	virtual void initTaskMap() = 0;
 
@@ -340,6 +346,8 @@ protected:
 	Equipment m_equipment;
 	unsigned int m_roleID = 0;
 
+	bool m_equipmentChanged = true;
+
 	//move cooldown cache, set to m_moveCooldown after succesful move
 	float m_moveDelay = 1000;
 	// current cooldown, prohibits move if >0
@@ -380,13 +388,15 @@ protected:
 	unsigned int m_mission  = 0;
 	quint64 m_nextCheckTick = 0;
 
+	bool m_hasTransparency = false;
+
 	QHash<QString, std::function<BT_RESULT( bool )>> m_behaviors;
 	QHash<QString, std::function<bool( void )>> m_taskFunctions;
 
 	QList<AggroEntry> m_aggroList;
 
 	QString m_btName        = "";
-	BT_Node* m_behaviorTree = nullptr;
+	QScopedPointer<BT_Node> m_behaviorTree;
 
 	BT_RESULT conditionIsMale( bool halt );
 	BT_RESULT conditionIsFemale( bool halt );
@@ -399,6 +409,7 @@ protected:
 	BT_RESULT conditionIsInCombat( bool halt );
 	BT_RESULT conditionIsOnMission( bool halt );
 	BT_RESULT conditionTargetAdjacent( bool halt );
+	BT_RESULT conditionTargetPositionValid( bool halt );
 
 	BT_RESULT actionRandomMove( bool halt );
 	BT_RESULT actionGetExitPosition( bool halt );
@@ -410,10 +421,16 @@ protected:
 	QList<unsigned int> m_carriedItems;
 	QList<unsigned int> m_inventoryItems;
 
+	virtual void die();
+
+	void dropInventory();
+	void dropEquipment();
+
 	void addClaimedItem( unsigned int item, unsigned int job );
-	void removeClaimedItem( unsigned int item );
 	void unclaimAll();
-	void clearClaimedItems();
+	void destroyClaimedItems();
+
+	Creature* resolveTarget( unsigned int creatureId );
 };
 
 struct CreatureCompare

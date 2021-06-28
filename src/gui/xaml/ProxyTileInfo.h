@@ -37,6 +37,15 @@ public:
 
 	void requestStockpileItems( unsigned int tileID );
 
+	void setTennant( unsigned int designationID, unsigned int gnomeID );
+	void setAlarm( unsigned int designationID, bool value );
+
+	void toggleMechActive( unsigned int id );
+	void toggleMechInvert( unsigned int id );
+
+	void setAutomatonRefuel( unsigned int id, bool refuel );
+	void setAutomatonCore( unsigned int id, QString core );
+
 private:
 	IngnomiaGUI::TileInfoModel* m_parent = nullptr;
 
@@ -48,4 +57,11 @@ signals:
 	void signalTerrainCommand( unsigned int tileID, QString cmd );
 	void signalManageCommand( unsigned int tileID );
 	void signalRequestStockpileItems( unsigned int tileID );
+	void signalSetTennant( unsigned int designationID, unsigned int gnomeID );
+	void signalSetAlarm( unsigned int designationID, bool value );
+	void signalToggleMechActive( unsigned int id );
+	void signalToggleMechInvert( unsigned int id );
+
+	void signalSetAutomatonRefuel( unsigned int id, bool refuel );
+	void signalSetAutomatonCore( unsigned int id, QString core );
 };

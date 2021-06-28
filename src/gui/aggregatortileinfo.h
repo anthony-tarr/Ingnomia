@@ -18,21 +18,32 @@
 #pragma once
 
 #include "../base/tile.h"
-
+#include "../game/creature.h"
+#include "../game/roommanager.h"
+#include "../game/mechanismmanager.h"
 #include "aggregatorstockpile.h"
 
 #include <QObject>
+
+class Game;
 
 struct GuiTICreatureInfo
 {
 	QString text;
 	unsigned int id = 0;
+	CreatureType type;
+	bool refuel;
+	QString coreItem;
 };
 
 struct GuiItemInfo
 {
 	QString text;
-	unsigned int id;
+	unsigned int id = 0;
+	QString material;
+	unsigned int count = 0;
+	bool inStockpile = false;
+	bool inContainer = false;
 };
 
 struct GuiTileInfo
@@ -57,14 +68,31 @@ struct GuiTileInfo
 
 	QString jobName;
 	QString jobWorker;
+	QString jobPriority;
+	QString requiredSkill;
 	QString requiredTool;
+	QString requiredToolAvailable;
+	QList<GuiItemInfo> requiredItems;
+	QString workPositions;
 
 	QList<GuiTICreatureInfo> creatures;
 	QList<GuiItemInfo> items;
+	QList<GuiTICreatureInfo> possibleTennants;
+	unsigned int tennant = 0;
 
 	unsigned int designationID = 0;
 	TileFlag designationFlag   = TileFlag::TF_NONE;
 	QString designationName;
+
+	RoomType roomType = RoomType::NotSet;
+	bool hasAlarmBell = false;
+	bool isEnclosed   = false;
+	bool hasRoof      = false;
+	QString beds;
+	bool alarm = false;
+	unsigned int roomValue = 0;
+
+	MechanismData mechInfo;
 };
 
 Q_DECLARE_METATYPE( GuiTileInfo )
@@ -77,7 +105,11 @@ public:
 	AggregatorTileInfo( QObject* parent = nullptr );
 	~AggregatorTileInfo();
 
+	void init( Game* game );
+
 private:
+    QPointer<Game> g;
+
 	unsigned int m_currentTileID = 0;
 	bool m_tileInfoDirty         = false;
 	GuiTileInfo m_tileInfo;
@@ -88,6 +120,12 @@ public slots:
 	void onUpdateAnyTileInfo( const QSet<unsigned int>& changeSet );
 	void onUpdateTileInfo( unsigned int tileID );
 	void onRequestStockpileItems( unsigned int tileID );
+	void onSetTennant( unsigned int designationID, unsigned int gnomeID );
+	void onSetAlarm( unsigned int designationID, bool value );
+	void onToggleMechActive( unsigned int id );
+	void onToggleMechInvert( unsigned int id );
+	void onSetAutomatonRefuel( unsigned int id, bool refuel );
+	void onSetAutomatonCore( unsigned int id, QString core );
 
 signals:
 	void signalShowTileInfo( unsigned int id );

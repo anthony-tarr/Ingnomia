@@ -16,6 +16,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "automaton.h"
+#include "game.h"
 
 #include "../base/db.h"
 #include "../base/global.h"
@@ -24,8 +25,8 @@
 
 #include <QDebug>
 
-Automaton::Automaton( Position pos, unsigned int automatonItem ) :
-	Gnome( pos, "Automaton", Gender::UNDEFINED ),
+Automaton::Automaton( Position pos, unsigned int automatonItem, Game* game ) :
+	Gnome( pos, "Automaton", Gender::UNDEFINED, game ),
 	m_automatonItem( automatonItem )
 {
 	m_type = CreatureType::AUTOMATON;
@@ -33,8 +34,8 @@ Automaton::Automaton( Position pos, unsigned int automatonItem ) :
 	init();
 }
 
-Automaton::Automaton( QVariantMap& in ) :
-	Gnome( in )
+Automaton::Automaton( QVariantMap& in, Game* game ) :
+	Gnome( in, game )
 {
 	m_type = CreatureType::AUTOMATON;
 
@@ -43,7 +44,12 @@ Automaton::Automaton( QVariantMap& in ) :
 	m_automatonItem   = in.value( "AutoItem" ).toInt();
 	m_coreType        = in.value( "CoreType" ).toString();
 	m_uninstallCore   = in.value( "UninstallFlag" ).toBool();
-	m_maintenaceJob   = in.value( "MaintenanceJob" ).toUInt();
+	unsigned int maintenaceJobID = in.value( "MaintenanceJob" ).toUInt();
+	if( maintenaceJobID )
+	{
+		m_maintenaceJob = game->jm()->getJob( maintenaceJobID );
+	}
+
 	m_maintJobChanged = in.value( "MaintJobChanged" ).toBool();
 	m_refuel          = in.value( "Refuel" ).toBool();
 
@@ -59,7 +65,7 @@ void Automaton::serialize( QVariantMap& out )
 	out.insert( "AutoItem", m_automatonItem );
 	out.insert( "CoreType", m_coreType );
 	out.insert( "UninstallFlag", m_uninstallCore );
-	out.insert( "MaintenanceJob", m_maintenaceJob );
+	out.insert( "MaintenanceJob", maintenanceJobID() );
 	out.insert( "MaintJobChanged", m_maintJobChanged );
 	out.insert( "Refuel", m_refuel );
 }
@@ -74,7 +80,7 @@ void Automaton::init()
 
 	if ( m_core )
 	{
-		QString itemSID = Global::inv().itemSID( m_core );
+		QString itemSID = g->inv()->itemSID( m_core );
 
 		auto row = DB::selectRow( "Automaton_Cores", itemSID );
 		loadBehaviorTree( row.value( "BehaviorTree" ).toString() );
@@ -105,14 +111,13 @@ void Automaton::init()
 
 void Automaton::updateSprite()
 {
-	QString material = Global::inv().materialSID( m_automatonItem );
+	QString material = g->inv()->materialSID( m_automatonItem );
 
-	auto components = Global::inv().components( m_automatonItem );
+	auto components = g->inv()->components( m_automatonItem );
 	QMap<QString, QString> compMats;
 	for ( auto vcomp : components )
 	{
 		auto comp = vcomp.toMap();
-		qDebug() << comp.value( "ItSID" ).toString() << comp.value( "MaSID" ).toString();
 		auto it = comp.value( "ItSID" ).toString();
 		auto ma = comp.value( "MaSID" ).toString();
 
@@ -132,7 +137,7 @@ void Automaton::updateSprite()
 			compMats.insert( it, ma );
 		}
 	}
-	QString itemSID = Global::inv().itemSID( m_automatonItem );
+	QString itemSID = g->inv()->itemSID( m_automatonItem );
 	auto parts      = DB::selectRows( "Creature_Parts", itemSID );
 
 	QVariantMap ordered;
@@ -159,7 +164,6 @@ void Automaton::updateSprite()
 			pm.insert( "BaseSprite", bsl[rn] );
 		}
 		QString idPart = pm.value( "ID" ).toString() + pm.value( "Part" ).toString();
-		//qDebug() << idPart;
 		if ( compMats.contains( idPart ) )
 		{
 			pm.insert( "Material", compMats.value( idPart ) );
@@ -206,7 +210,7 @@ void Automaton::updateSprite()
 		QString aid = pm.value( "ID" ).toString();
 		aid.chop( 4 );
 		QString idPart = aid + pm.value( "Part" ).toString();
-		//qDebug() << idPart;
+
 		if ( compMats.contains( idPart ) )
 		{
 			pm.insert( "Material", compMats.value( idPart ) );
@@ -229,7 +233,7 @@ void Automaton::updateSprite()
 		}
 	}
 
-	m_spriteID = Global::sf().setCreatureSprite( m_id, def, defBack, m_isDead )->uID;
+	m_spriteID = g->sf()->setCreatureSprite( m_id, def, defBack, isDead() )->uID;
 
 	m_renderParamsChanged = true;
 }
@@ -261,7 +265,6 @@ CreatureTickResult Automaton::onTick( quint64 tickNumber, bool seasonChanged, bo
 
 	if ( m_job && ( m_job->isAborted() || m_job->isCanceled() ) )
 	{
-		qDebug() << m_job->type() << " job is canceled";
 		cleanUpJob( false );
 		m_behaviorTree->halt();
 	}
@@ -288,15 +291,11 @@ void Automaton::installCore( unsigned int itemID )
 	if ( m_core )
 	{
 		//drop existing core
-		Global::inv().setInJob( m_core, 0 );
-		Global::inv().putDownItem( m_core, m_position );
+		g->inv()->setInJob( m_core, 0 );
+		g->inv()->putDownItem( m_core, m_position );
 		m_core = 0;
 
-		if ( m_behaviorTree )
-		{
-			delete m_behaviorTree;
-		}
-		m_behaviorTree = nullptr;
+		m_behaviorTree.reset();
 
 		m_skills.clear();
 		m_skillActive.clear();
@@ -308,23 +307,20 @@ void Automaton::installCore( unsigned int itemID )
 	//install core
 	if ( itemID )
 	{
-		QString itemSID = Global::inv().itemSID( itemID );
+		QString itemSID = g->inv()->itemSID( itemID );
 		if ( itemSID.startsWith( "AutomatonCore" ) )
 		{
 			m_core = itemID;
-			Global::inv().pickUpItem( itemID );
-			Global::inv().setInJob( itemID, m_id );
+			g->inv()->pickUpItem( itemID, m_id );
 
 			auto row = DB::selectRow( "Automaton_Cores", itemSID );
 
 			loadBehaviorTree( row.value( "BehaviorTree" ).toString() );
-			qDebug() << "installing skills for " << itemSID;
-			for ( auto row : DB::selectRows( "Automaton_Cores_Skills", itemSID ) )
+			for ( auto row2 : DB::selectRows( "Automaton_Cores_Skills", itemSID ) )
 			{
-				QString skillID = row.value( "SkillID" ).toString();
-				int value       = row.value( "SkillValue" ).toInt();
+				QString skillID = row2.value( "SkillID" ).toString();
+				int value       = row2.value( "SkillValue" ).toInt();
 
-				qDebug() << skillID << value;
 				m_skills.insert( skillID, value );
 				m_skillActive.insert( skillID, true );
 				m_skillPriorities.append( skillID );
@@ -350,6 +346,10 @@ void Automaton::setRefuelFlag( bool flag )
 
 void Automaton::setCoreType( QString coreSID )
 {
+	if( !m_coreType.isEmpty() && coreSID.isEmpty() )
+	{
+		m_uninstallCore = true;
+	}
 	m_coreType        = coreSID;
 	m_maintJobChanged = true;
 }
@@ -370,15 +370,20 @@ bool Automaton::uninstallFlag()
 	return m_uninstallCore;
 }
 
-void Automaton::setMaintenanceJobID( unsigned int id )
+void Automaton::setMaintenanceJob( QSharedPointer<Job> job )
 {
-	m_maintenaceJob   = id;
+	m_maintenaceJob   = job;
 	m_maintJobChanged = true;
 }
 
 unsigned int Automaton::maintenanceJobID()
 {
-	return m_maintenaceJob;
+	if( m_maintenaceJob )
+	{
+		auto job = m_maintenaceJob.toStrongRef();
+		return job->id();
+	}
+	return 0;
 }
 
 bool Automaton::maintenanceJobChanged()

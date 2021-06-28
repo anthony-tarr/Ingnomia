@@ -24,7 +24,7 @@ struct TraderItem {
 	QString type;
 	QString itemSID;
 	QString materialSID;
-	Gender gender = Gender::MALE;
+	QString gender;
 	unsigned char quality = 0;
 	int value = 0;
 	int amount = 0;
@@ -43,8 +43,8 @@ struct TraderDefinition {
 class GnomeTrader : public Gnome
 {
 public:
-	GnomeTrader( Position& pos, QString name, Gender gender );
-	GnomeTrader( QVariantMap& in );
+	GnomeTrader( Position& pos, QString name, Gender gender, Game* game );
+	GnomeTrader( QVariantMap& in, Game* game );
 	~GnomeTrader();
 
 	virtual void serialize( QVariantMap& out );

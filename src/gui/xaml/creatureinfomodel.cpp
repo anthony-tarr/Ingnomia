@@ -19,10 +19,6 @@
 
 #include "creatureinfoproxy.h"
 
-#include "../../base/util.h"
-#include "../../game/militarymanager.h"
-#include "../../gfx/spritefactory.h"
-
 #include <NsApp/Application.h>
 #include <NsCore/Log.h>
 #include <NsCore/ReflectionImplement.h>
@@ -39,9 +35,6 @@ using namespace NoesisApp;
 
 
 
-
-
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 CreatureInfoModel::CreatureInfoModel()
@@ -51,6 +44,23 @@ CreatureInfoModel::CreatureInfoModel()
 
 	m_professions = *new ObservableCollection<ProfItem>();
 	m_proxy->requestProfessionList();
+}
+
+void CreatureInfoModel::updateEmptySlotImages( const QMap< QString, std::vector<unsigned char> >& pics )
+{
+	m_bitmapHeadEmpty =  BitmapImage::Create( 32, 32, 96, 96, pics.value( "UIEmptySlotHead" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+	m_bitmapChestEmpty = BitmapImage::Create( 32, 32, 96, 96, pics.value( "UIEmptySlotChest" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+	m_bitmapArmsEmpty =  BitmapImage::Create( 32, 32, 96, 96, pics.value( "UIEmptySlotArms" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+	m_bitmapHandsEmpty = BitmapImage::Create( 32, 32, 96, 96, pics.value( "UIEmptySlotHands" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+	m_bitmapLegsEmpty =  BitmapImage::Create( 32, 32, 96, 96, pics.value( "UIEmptySlotLegs" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+	m_bitmapFeetEmpty =  BitmapImage::Create( 32, 32, 96, 96, pics.value( "UIEmptySlotFeet" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+	m_bitmapLHeldEmpty = BitmapImage::Create( 32, 32, 96, 96, pics.value( "UIEmptySlotShield" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+	m_bitmapRHeldEmpty = BitmapImage::Create( 32, 32, 96, 96, pics.value( "UIEmptySlotWeapon" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+	m_bitmapBackEmpty =  BitmapImage::Create( 32, 32, 96, 96, pics.value( "UIEmptySlotBack" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+	m_bitmapNeckEmpty =  BitmapImage::Create( 32, 32, 96, 96, pics.value( "UIEmptySlotNeck" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+	m_bitmapLRingEmpty = BitmapImage::Create( 32, 32, 96, 96, pics.value( "UIEmptySlotRing" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+	m_bitmapRRingEmpty = BitmapImage::Create( 32, 32, 96, 96, pics.value( "UIEmptySlotRing" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+	m_emptyPicsInitialized = true;
 }
 
 void CreatureInfoModel::updateProfessionList( const QStringList& professions )
@@ -65,6 +75,11 @@ void CreatureInfoModel::updateProfessionList( const QStringList& professions )
 
 void CreatureInfoModel::updateInfo( const GuiCreatureInfo& info )
 {
+	if( !m_emptyPicsInitialized )
+	{
+		m_proxy->requestEmptySlotImages();
+	}
+
 	m_name = info.name.toStdString().c_str();
 	m_id = info.id;
 
@@ -88,7 +103,7 @@ void CreatureInfoModel::updateInfo( const GuiCreatureInfo& info )
 			break;
 		}
 	}
-
+	
 	m_activity = info.activity.toStdString().c_str();
 
 	OnPropertyChanged( "Name" );
@@ -103,23 +118,6 @@ void CreatureInfoModel::updateInfo( const GuiCreatureInfo& info )
 	OnPropertyChanged( "Sleep" );
 	OnPropertyChanged( "Happiness" );
 	OnPropertyChanged( "Activity" );
-
-	if( ! m_emptySlotsInitialized )
-	{
-		m_bitmapHeadEmpty = createEmptyUniformImg( "UIEmptySlotHead" );
-		m_bitmapChestEmpty = createEmptyUniformImg( "UIEmptySlotChest" );
-		m_bitmapArmsEmpty = createEmptyUniformImg( "UIEmptySlotArms" );
-		m_bitmapHandsEmpty = createEmptyUniformImg( "UIEmptySlotHands" );
-		m_bitmapLegsEmpty = createEmptyUniformImg( "UIEmptySlotLegs" );
-		m_bitmapFeetEmpty = createEmptyUniformImg( "UIEmptySlotFeet" );
-		m_bitmapLHeldEmpty = createEmptyUniformImg( "UIEmptySlotShield" );
-		m_bitmapRHeldEmpty = createEmptyUniformImg( "UIEmptySlotWeapon" );
-		//m_bitmapBackEmpty = createEmptyUniformImg( "UIEmptySlot" );
-		m_bitmapNeckEmpty = createEmptyUniformImg( "UIEmptySlotNeck" );
-		m_bitmapLRingEmpty = createEmptyUniformImg( "UIEmptySlotRing" );
-		m_bitmapRRingEmpty = createEmptyUniformImg( "UIEmptySlotRing" );
-		m_emptySlotsInitialized = true;
-	}
 
 	m_bitmapHead  = m_bitmapHeadEmpty;
 	m_bitmapChest = m_bitmapChestEmpty;
@@ -136,30 +134,84 @@ void CreatureInfoModel::updateInfo( const GuiCreatureInfo& info )
 
 	if( info.equipment.head.itemID )
 	{
-		m_bitmapHead = createUniformImg( "ArmorHead", info.uniform.parts.value( "HeadArmor" ), info.equipment.head );
+		if( info.itemPics.contains( "ArmorHead" ) )
+		{
+			if( info.itemPics.value( "ArmorHead" ).size() == 8192 )
+			{
+				m_bitmapHead = BitmapImage::Create( 32, 32, 96, 96, info.itemPics.value( "ArmorHead" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+			}
+		}
 	}
 	if( info.equipment.chest.itemID )
 	{
-		m_bitmapChest = createUniformImg( "ArmorChest", info.uniform.parts.value( "ChestArmor" ), info.equipment.chest );
+		if( info.itemPics.contains( "ArmorChest" ) )
+		{
+			if( info.itemPics.value( "ArmorChest" ).size() == 8192 )
+			{
+				m_bitmapChest = BitmapImage::Create( 32, 32, 96, 96, info.itemPics.value( "ArmorChest" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+			}
+		}
 	}
 	if( info.equipment.arm.itemID )
 	{
-		m_bitmapArms = createUniformImg( "ArmorArms", info.uniform.parts.value( "ArmArmor" ), info.equipment.arm );
+		if( info.itemPics.contains( "ArmorArms" ) )
+		{
+			if( info.itemPics.value( "ArmorArms" ).size() == 8192 )
+			{
+				m_bitmapArms = BitmapImage::Create( 32, 32, 96, 96, info.itemPics.value( "ArmorArms" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+			}
+		}
 	}
 	if( info.equipment.hand.itemID )
 	{
-		m_bitmapHands = createUniformImg( "ArmorHands", info.uniform.parts.value( "HandArmor" ), info.equipment.hand );
+		if( info.itemPics.contains( "ArmorHands" ) )
+		{
+			if( info.itemPics.value( "ArmorHands" ).size() == 8192 )
+			{
+				m_bitmapHands = BitmapImage::Create( 32, 32, 96, 96, info.itemPics.value( "ArmorHands" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+			}
+		}
 	}
 	if( info.equipment.leg.itemID )
 	{
-		m_bitmapLegs = createUniformImg( "ArmorLegs", info.uniform.parts.value( "LegArmor" ), info.equipment.leg );
+		if( info.itemPics.contains( "ArmorLegs" ) )
+		{
+			if( info.itemPics.value( "ArmorLegs" ).size() == 8192 )
+			{
+				m_bitmapLegs = BitmapImage::Create( 32, 32, 96, 96, info.itemPics.value( "ArmorLegs" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+			}
+		}
 	}
 	if( info.equipment.foot.itemID )
 	{
-		m_bitmapFeet = createUniformImg( "ArmorFeet", info.uniform.parts.value( "FootArmor" ), info.equipment.foot );
+		if( info.itemPics.contains( "ArmorFeet" ) )
+		{
+			if( info.itemPics.value( "ArmorFeet" ).size() == 8192 )
+			{
+				m_bitmapFeet = BitmapImage::Create( 32, 32, 96, 96, info.itemPics.value( "ArmorFeet" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+			}
+		}
 	}
-	//m_bitmapLHeld = createUniformImg( "LeftHandHeld", info.uniform->parts.value( "LeftHandHeld" ) );
-	//m_bitmapRHeld = createUniformImg( "RightHandHeld", info.uniform->parts.value( "RightHandHeld" ) );
+	if( info.equipment.leftHandHeld.itemID )
+	{
+		if( info.itemPics.contains( "LeftHandHeld" ) )
+		{
+			if( info.itemPics.value( "LeftHandHeld" ).size() == 8192 )
+			{
+				m_bitmapLHeld = BitmapImage::Create( 32, 32, 96, 96, info.itemPics.value( "LeftHandHeld" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+			}
+		}
+	}
+	if( info.equipment.rightHandHeld.itemID )
+	{
+		if( info.itemPics.contains( "RightHandHeld" ) )
+		{
+			if( info.itemPics.value( "RightHandHeld" ).size() == 8192 )
+			{
+				m_bitmapRHeld = BitmapImage::Create( 32, 32, 96, 96, info.itemPics.value( "RightHandHeld" ).data(), 128, BitmapSource::Format::Format_RGBA8 );
+			}
+		}
+	}
 	//m_bitmapBack = createUniformImg( "Back", info.uniform );
 	//m_bitmapNeck = createUniformImg( "", info.uniform );
 	//m_bitmapLRing = createUniformImg( "", info.uniform );
@@ -177,48 +229,6 @@ void CreatureInfoModel::updateInfo( const GuiCreatureInfo& info )
 	OnPropertyChanged( "ImgNeck" );
 	OnPropertyChanged( "ImgLRing" );
 	OnPropertyChanged( "ImgRRing" );
-}
-
-Noesis::Ptr<Noesis::BitmapSource> CreatureInfoModel::createUniformImg( QString slot, const UniformItem& uItem, const EquipmentItem& eItem )
-{
-	if( uItem.item.isEmpty() || eItem.itemID == 0 )
-	{
-		return nullptr;
-	}
-	QStringList mats;
-	mats.append( eItem.material );
-
-	auto sprite = Global::sf().createSprite( "UI" + uItem.type + slot, mats );
-	if( sprite )
-	{
-		QPixmap pm = sprite->pixmap( "Spring", 0, 0 );
-
-		std::vector<unsigned char> buffer;
-
-		Util::createBufferForNoesisImage( pm, buffer );
-
-		return BitmapImage::Create( pm.width(), pm.height(), 96, 96, buffer.data(), pm.width() * 4, BitmapSource::Format::Format_RGBA8 );
-	}
-	return nullptr;
-}
-
-Noesis::Ptr<Noesis::BitmapSource> CreatureInfoModel::createEmptyUniformImg( QString spriteID )
-{
-	QStringList mats; 
-	mats.append( "any" );
-	
-	auto sprite = Global::sf().createSprite( spriteID, mats );
-	if( sprite )
-	{
-		QPixmap pm = sprite->pixmap( "Spring", 0, 0 );
-
-		std::vector<unsigned char> buffer;
-
-		Util::createBufferForNoesisImage( pm, buffer );
-
-		return BitmapImage::Create( pm.width(), pm.height(), 96, 96, buffer.data(), pm.width() * 4, BitmapSource::Format::Format_RGBA8 );
-	}
-	return nullptr;
 }
 
 const char* CreatureInfoModel::GetName() const { return m_name.Str(); }
@@ -292,5 +302,5 @@ NS_IMPLEMENT_REFLECTION( CreatureInfoModel, "IngnomiaGUI.CreatureInfoModel" )
 	NsProp( "ImgBack" ,     &CreatureInfoModel::getBitmapSourceBack );
 	NsProp( "ImgNeck" ,     &CreatureInfoModel::getBitmapSourceNeck );
 	NsProp( "ImgLRing",     &CreatureInfoModel::getBitmapSourceLRing );
-	NsProp( "ImgRRing" ,     &CreatureInfoModel::getBitmapSourceRRing );
+	NsProp( "ImgRRing" ,    &CreatureInfoModel::getBitmapSourceRRing );
 }

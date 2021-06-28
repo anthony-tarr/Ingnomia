@@ -24,6 +24,7 @@
 #include "../base/position.h"
 #include "../base/util.h"
 #include "../base/vptr.h"
+#include "../game/game.h"
 #include "../game/creaturemanager.h"
 #include "../game/farmingmanager.h"
 #include "../game/gnomemanager.h"
@@ -44,7 +45,12 @@
 #include <random>
 #include <time.h>
 
-World::World()
+World::World( int dimX, int dimY, int dimZ, Game* game ) :
+	g( game ),
+	m_dimX( dimX ),
+	m_dimY( dimY ),
+	m_dimZ( dimZ ),
+	m_regionMap( this )
 {
 	m_constructionSID2ENUM.insert( "Wall", CID_WALL );
 	m_constructionSID2ENUM.insert( "FancyWall", CID_FANCYWALL );
@@ -55,7 +61,6 @@ World::World()
 	m_constructionSID2ENUM.insert( "Stairs", CID_STAIRS );
 	m_constructionSID2ENUM.insert( "Ramp", CID_RAMP );
 	m_constructionSID2ENUM.insert( "RampCorner", CID_RAMPCORNER );
-	m_constructionSID2ENUM.insert( "Scaffold", CID_SCAFFOLD );
 	m_constructionSID2ENUM.insert( "Item", CID_ITEM );
 	m_constructionSID2ENUM.insert( "Workshop", CID_WORKSHOP );
 
@@ -84,13 +89,6 @@ void World::init()
 	m_lightMap.init();
 	initWater();
 	initGrassUpdateList();
-}
-
-void World::initLite()
-{
-	m_dimX = Global::dimX;
-	m_dimY = Global::dimY;
-	m_dimZ = Global::dimZ;
 }
 
 void World::initWater()
@@ -139,24 +137,6 @@ void World::initWater()
 	}
 }
 
-void World::reset()
-{
-	qDebug() << "World::reset";
-	m_world.clear();
-	m_plants.clear();
-	m_creaturePositions.clear();
-	m_floorConstructions.clear();
-	m_wallConstructions.clear();
-	m_grass.clear();
-	m_grassCandidatePositions.clear();
-	m_regionMap.clear();
-	m_lightMap.init();
-	m_jobSprites.clear();
-	m_water.clear();
-	m_aquifiers.clear();
-	m_deaquifiers.clear();
-}
-
 void World::afterLoad()
 {
 	qDebug() << "World::afterLoad";
@@ -174,33 +154,27 @@ void World::setFloorSprite( unsigned short x, unsigned short y, unsigned short z
 {
 	getTile( x, y, z ).floorSpriteUID = spriteUID;
 	addToUpdateList( x, y, z );
-	GameState::addChange( NetworkCommand::SETFLOORSPRITE, { QString::number( Position( x, y, z ).toInt() ), QString::number( spriteUID ) } );
 }
 
 void World::setFloorSprite( Position pos, unsigned int spriteUID )
 {
 	getTile( pos ).floorSpriteUID = spriteUID;
 	addToUpdateList( pos );
-	GameState::addChange( NetworkCommand::SETFLOORSPRITE, { QString::number( pos.toInt() ), QString::number( spriteUID ) } );
 }
 
 void World::setWallSprite( unsigned short x, unsigned short y, unsigned short z, unsigned int spriteUID, unsigned char rotation )
 {
-	QMutexLocker lock( &m_mutex );
 	unsigned int UID           = Position( x, y, z ).toInt();
 	m_world[UID].wallSpriteUID = spriteUID;
 	m_world[UID].wallRotation  = rotation;
-	GameState::addChange( NetworkCommand::SETWALLSPRITE, { QString::number( UID ), QString::number( spriteUID ) } );
 	addToUpdateList( UID );
 }
 
 void World::setWallSprite( Position pos, unsigned int spriteUID, unsigned char rotation )
 {
-	QMutexLocker lock( &m_mutex );
 	unsigned int UID           = pos.toInt();
 	m_world[UID].wallSpriteUID = spriteUID;
 	m_world[UID].wallRotation  = rotation;
-	GameState::addChange( NetworkCommand::SETWALLSPRITE, { QString::number( UID ), QString::number( spriteUID ) } );
 	addToUpdateList( UID );
 }
 
@@ -211,21 +185,17 @@ void World::setWallSprite( unsigned int tileID, unsigned int spriteUID )
 
 void World::setItemSprite( unsigned short x, unsigned short y, unsigned short z, unsigned int spriteUID, unsigned char rotation )
 {
-	QMutexLocker lock( &m_mutex );
 	unsigned int UID           = Position( x, y, z ).toInt();
 	m_world[UID].itemSpriteUID = spriteUID;
 	//m_world[UID].wallRotation = rotation;
-	//GameState::addChange( NetworkCommand::SETITEMSPRITE, { QString::number( UID ), QString::number( spriteUID ) } );
 	addToUpdateList( UID );
 }
 
 void World::setItemSprite( Position pos, unsigned int spriteUID, unsigned char rotation )
 {
-	QMutexLocker lock( &m_mutex );
 	unsigned int UID           = pos.toInt();
 	m_world[UID].itemSpriteUID = spriteUID;
 	//m_world[UID].wallRotation = rotation;
-	GameState::addChange( NetworkCommand::SETWALLSPRITE, { QString::number( UID ), QString::number( spriteUID ) } );
 	addToUpdateList( UID );
 }
 
@@ -266,7 +236,6 @@ void World::setJobSprite( Position pos, unsigned int spriteUID, unsigned char ro
 	s.insert( "JobID", jobID );
 	s.insert( "SpriteUID", spriteUID );
 
-	QMutexLocker lock( &m_mutex );
 	if ( !m_jobSprites.contains( pos.toInt() ) )
 	{
 		QVariantMap entry;
@@ -282,30 +251,27 @@ void World::setJobSprite( Position pos, unsigned int spriteUID, unsigned char ro
 	}
 
 	addToUpdateList( pos.toInt() );
-	GameState::addChange( NetworkCommand::SETJOBSPRITE, { QString::number( pos.toInt() ), QString::number( spriteUID ), QString::number( rotation ), ( floor ) ? QString::number( 1 ) : QString::number( 0 ), QString::number( jobID ) } );
 }
 
 void World::clearJobSprite( Position pos, bool floor )
 {
-	QMutexLocker lock( &m_mutex );
-
 	if ( m_jobSprites.contains( pos.toInt() ) )
 	{
 		if ( floor )
 		{
 			m_jobSprites[pos.toInt()].remove( "Floor" );
+			clearTileFlag( pos, TileFlag::TF_JOB_FLOOR + TileFlag::TF_JOB_BUSY_FLOOR );
 		}
 		else
 		{
 			m_jobSprites[pos.toInt()].remove( "Wall" );
+			clearTileFlag( pos, TileFlag::TF_JOB_WALL + TileFlag::TF_JOB_BUSY_WALL );
 		}
 	}
 	if ( m_jobSprites[pos.toInt()].isEmpty() )
 	{
 		m_jobSprites.remove( pos.toInt() );
 	}
-	clearTileFlag( pos, TileFlag::TF_JOB_FLOOR + TileFlag::TF_JOB_WALL + TileFlag::TF_JOB_BUSY_FLOOR + TileFlag::TF_JOB_BUSY_WALL );
-	GameState::addChange2( NetworkCommand::CLEARJOBSPRITE, pos.toString() );
 	addToUpdateList( pos.toInt() );
 }
 
@@ -325,7 +291,6 @@ void World::setTileFlag( Position pos, TileFlag flag )
 	{
 		m_regionMap.updatePosition( pos );
 	}
-	GameState::addChange( NetworkCommand::SETTILEFLAGS, { QString::number( tid ), Util::tile2String( tile ) } );
 	addToUpdateList( pos.toInt() );
 }
 
@@ -339,12 +304,10 @@ void World::clearTileFlag( Position pos, TileFlag flag )
 	{
 		m_regionMap.updatePosition( pos );
 
-		Global::fm().removeTile( pos, true, true, false );
-		Global::spm().removeTile( pos );
-		Global::rm().removeTile( pos );
+		g->fm()->removeTile( pos, true, true, false );
+		g->spm()->removeTile( pos );
+		g->rm()->removeTile( pos );
 	}
-
-	GameState::addChange( NetworkCommand::SETTILEFLAGS, { QString::number( tid ), Util::tile2String( tile ) } );
 	addToUpdateList( pos.toInt() );
 }
 
@@ -406,7 +369,7 @@ void World::updateFenceSprite( Position pos )
 		Tile& tile             = getTile( tid );
 		QString materialID     = DBH::materialSID( tile.wallMaterial );
 		QString spriteSID      = sp.value( "SpriteID" ).toString() + suffix;
-		unsigned int spriteUID = Global::sf().createSprite( spriteSID, { materialID } )->uID;
+		unsigned int spriteUID = g->sf()->createSprite( spriteSID, { materialID } )->uID;
 
 		tile.wallSpriteUID = spriteUID;
 	}
@@ -427,7 +390,7 @@ void World::updatePipeSprite( Position pos )
 	QString suffix = "Rot";
 
 	unsigned int itemUID = constr.value( "Item" ).toUInt();
-	QString itemSID      = Global::inv().itemSID( itemUID );
+	QString itemSID      = g->inv()->itemSID( itemUID );
 
 	if ( itemSID.startsWith( "Pump" ) )
 	{
@@ -461,7 +424,7 @@ void World::updatePipeSprite( Position pos )
 		Tile& tile             = getTile( tid );
 		QString materialID     = DBH::materialSID( tile.wallMaterial );
 		QString spriteSID      = sp.value( "SpriteID" ).toString() + suffix;
-		unsigned int spriteUID = Global::sf().createSprite( spriteSID, { materialID } )->uID;
+		unsigned int spriteUID = g->sf()->createSprite( spriteSID, { materialID } )->uID;
 
 		tile.wallSpriteUID = spriteUID;
 	}
@@ -488,14 +451,14 @@ void World::expelTileItems( Position pos, Position& to )
 	Tile& tile = getTile( pos );
 	//do we even have to move anything?
 	PositionEntry pe;
-	if ( Global::inv().getObjectsAtPosition( pos, pe ) )
+	if ( g->inv()->getObjectsAtPosition( pos, pe ) )
 	{
 		//check if tile is now blocked for items and creatures
 		if ( tile.wallType & WallType::WT_MOVEBLOCKING || !isWalkable( pos ) )
 		{
 			for ( auto i : pe )
 			{
-				Global::inv().moveItemToPos( i, to );
+				g->inv()->moveItemToPos( i, to );
 			}
 		}
 	}
@@ -511,29 +474,32 @@ void World::expelTileInhabitants( Position pos, Position& to )
 		//check if tile is now blocked for items and creatures
 		if ( (bool)( tile.wallType & WallType::WT_MOVEBLOCKING ) || !isWalkable( pos ) )
 		{
-			Global::gm().forceMoveGnomes( pos, to );
-			Global::cm().forceMoveAnimals( pos, to );
+			g->gm()->forceMoveGnomes( pos, to );
+			g->cm()->forceMoveAnimals( pos, to );
 		}
 	}
 }
 
 void World::plantTree( Position pos, QString type, bool fullyGrown )
 {
-	Plant plant_( pos, type, fullyGrown );
+	Plant plant_( pos, type, fullyGrown, g );
 	m_plants.insert( pos.toInt(), plant_ );
 
-	QMutexLocker lock( &m_mutex );
 	getTile( pos ).wallSpriteUID = m_plants[pos.toInt()].getSprite()->uID;
 	addToUpdateList( pos );
 }
 
 void World::plantMushroom( Position pos, QString type, bool fullyGrown )
 {
-	Plant plant_( pos, type, fullyGrown );
+	Plant plant_( pos, type, fullyGrown, g );
 	m_plants.insert( pos.toInt(), plant_ );
 
-	QMutexLocker lock( &m_mutex );
-	getTile( pos ).wallSpriteUID = m_plants[pos.toInt()].getSprite()->uID;
+	Tile& tile = getTile( pos );
+	if( plant_.hasAlpha() )
+	{
+		setTileFlag( pos, TileFlag::TF_TRANSPARENT );
+	}
+	tile.wallSpriteUID = m_plants[pos.toInt()].getSprite()->uID;
 	addToUpdateList( pos );
 }
 
@@ -542,11 +508,10 @@ void World::plant( Position pos, unsigned int baseItem )
 	QStringList plants = DB::ids( "Plants", "Type", "Plant" );
 	for ( auto plant : plants )
 	{
-		if ( DB::select( "Material", "Plants", plant ).toString() == Global::inv().materialSID( baseItem ) )
+		if ( DB::select( "Material", "Plants", plant ).toString() == g->inv()->materialSID( baseItem ) )
 		{
-			Plant plant_( pos, plant );
+			Plant plant_( pos, plant, false, g );
 			m_plants.insert( pos.toInt(), plant_ );
-			QMutexLocker lock( &m_mutex );
 			getTile( pos ).wallSpriteUID = m_plants[pos.toInt()].getSprite()->uID;
 			return;
 		}
@@ -562,7 +527,6 @@ void World::addPlant( Plant plant )
 
 void World::removePlant( Position pos )
 {
-	QMutexLocker lock( &m_mutex );
 	if ( m_plants.contains( pos.toInt() ) )
 	{
 		getTile( pos ).wallType      = WallType::WT_NOWALL;
@@ -593,19 +557,18 @@ bool World::reduceOneGrowLevel( Position pos )
 
 void World::removeCreatureFromPosition( Position pos, unsigned int creatureID )
 {
-	QMutexLocker lock( &m_mutex );
 	if ( m_creaturePositions.contains( pos.toInt() ) )
 	{
 		if ( m_creaturePositions[pos.toInt()].size() == 1 )
 		{
 			m_creaturePositions.remove( pos.toInt() );
-			Global::mcm().updateCreaturesAtPos( pos, 0 );
+			g->mcm()->updateCreaturesAtPos( pos, 0 );
 		}
 		else
 		{
 			QList<unsigned int>& cl = m_creaturePositions[pos.toInt()];
 			cl.removeAll( creatureID );
-			Global::mcm().updateCreaturesAtPos( pos, m_creaturePositions[pos.toInt()].size() );
+			g->mcm()->updateCreaturesAtPos( pos, m_creaturePositions[pos.toInt()].size() );
 		}
 		addToUpdateList( pos );
 	}
@@ -613,17 +576,16 @@ void World::removeCreatureFromPosition( Position pos, unsigned int creatureID )
 
 void World::insertCreatureAtPosition( Position pos, unsigned int creatureID )
 {
-	QMutexLocker lock( &m_mutex );
 	if ( m_creaturePositions.contains( pos.toInt() ) )
 	{
 		m_creaturePositions[pos.toInt()].push_back( creatureID );
-		Global::mcm().updateCreaturesAtPos( pos, m_creaturePositions[pos.toInt()].size() );
+		g->mcm()->updateCreaturesAtPos( pos, m_creaturePositions[pos.toInt()].size() );
 	}
 	else
 	{
 		QList<unsigned int> cl( { creatureID } );
 		m_creaturePositions.insert( pos.toInt(), cl );
-		Global::mcm().updateCreaturesAtPos( pos, 1 );
+		g->mcm()->updateCreaturesAtPos( pos, 1 );
 	}
 	addToUpdateList( pos );
 }
@@ -742,7 +704,7 @@ void World::removeGrass( Position pos )
 		if ( tile.floorType & FT_SOLIDFLOOR && materialSID == "Dirt" )
 		{
 			//if( Global::debugMode ) qDebug() << "add grass candidate at " << pos.toString();
-			tile.floorSpriteUID = Global::sf().createSprite( "RoughFloor", { "Dirt" } )->uID;
+			tile.floorSpriteUID = g->sf()->createSprite( "RoughFloor", { "Dirt" } )->uID;
 			m_grassCandidatePositions.insert( pos.toInt() );
 		}
 	}
@@ -759,7 +721,7 @@ void World::createGrass( Position pos )
 	}
 
 	Tile& tile          = getTile( pos );
-	tile.floorSpriteUID = Global::sf().createSprite( "GrassWithDetail", { "Grass", "None" } )->uID;
+	tile.floorSpriteUID = g->sf()->createSprite( "GrassWithDetail", { "Grass", "None" } )->uID;
 
 	m_grass.insert( pos );
 	setTileFlag( pos, TileFlag::TF_GRASS );
@@ -818,16 +780,10 @@ void World::processWater()
 	for ( const auto& pos : m_aquifiers )
 	{
 		Tile& tile = getTile( pos );
-		if ( tile.pressure < 2 )
+		if ( tile.pressure == 0 && tile.fluidLevel < 10)
 		{
-			if ( tile.fluidLevel < 10 )
-			{
-				tile.fluidLevel++;
-			}
-			else
-			{
-				tile.pressure++;
-			}
+			tile.fluidLevel++;
+			tile.flags += TileFlag::TF_WATER;
 			waterUpdates.append( pos.toInt() );
 		}
 		m_water.insert( pos.toInt() );
@@ -870,10 +826,10 @@ struct Neighbors
 	inline Neighbors( unsigned int pos )
 #endif
 	{
-		const auto pitchY = Global::dimX;
-		const auto pitchZ = pitchY * Global::dimY;
+		const unsigned int pitchY = Global::dimX;
+		const unsigned int pitchZ = pitchY * Global::dimY;
 
-		const auto maxZ = pitchZ * ( Global::dimZ - 1 );
+		const unsigned int maxZ = pitchZ * ( Global::dimZ - 1 );
 
 		const auto plane = pos % pitchZ;
 		const auto row   = pos % pitchY;
@@ -939,73 +895,114 @@ void World::processWaterFlow()
 
 			const Neighbors neighbors( currentPos );
 
-			// Flow down if no back-pressure
-			const Tile& downTile = getTile( neighbors.below );
-			if (
-				neighbors.below && !(bool)( here.floorType & FloorType::FT_SOLIDFLOOR ) && !(bool)( downTile.wallType & WallType::WT_MOVEBLOCKING ) && ( downTile.fluidLevel < 10 || here.pressure >= downTile.pressure ) )
-			{
-				here.flow = WF_DOWN;
-				drain.append( currentPos );
-				flood.append( neighbors.below );
-				continue;
-			}
-
-			// Flow sidewards in direction of lowest level
-			const unsigned int candidates[5] = {
+			const unsigned int candidates[7] = {
 				neighbors.north,
 				neighbors.south,
 				neighbors.east,
 				neighbors.west,
-				currentPos
+				currentPos,
+				neighbors.above,
+				neighbors.below,
 			};
-			constexpr WaterFlow direction[5] = {
+			constexpr WaterFlow direction[7] = {
 				WF_NORTH,
 				WF_SOUTH,
 				WF_EAST,
 				WF_WEST,
-				WF_NOFLOW
+				WF_NOFLOW,
+				WF_UP,
+				WF_DOWN
+			};
+			enum index : size_t
+			{
+				north = 0,
+				south,
+				east,
+				west,
+				center,
+				up,
+				down
 			};
 
-			unsigned int pressure[5] = { UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX };
-			for ( size_t i = 0; i < 5; i++ )
+			// Compute pressure for passable directions
+			constexpr int invalidPressure = INT_MAX;
+			int pressure[7];
+			for ( size_t i = north; i <= center; i++ )
 			{
 				const Tile& there = getTile( candidates[i] );
-				if (
-					candidates[i] && !(bool)( there.wallType & WallType::WT_MOVEBLOCKING ) )
+				if ( candidates[i] && !(bool)( there.wallType & WallType::WT_MOVEBLOCKING ) )
 				{
-					pressure[i] = there.pressure * 10 + there.fluidLevel;
+					pressure[i] = there.pressure + there.fluidLevel;
+				}
+				else
+				{
+					pressure[i] = invalidPressure;
+				}
+			}
+			{
+				const Tile& there = getTile( candidates[up] );
+				if ( candidates[up] && !(bool)( there.wallType & WallType::WT_MOVEBLOCKING ) && !(bool)( there.floorType & FloorType::FT_SOLIDFLOOR ) )
+				{
+					pressure[up] = there.pressure + there.fluidLevel;
+				}
+				else
+				{
+					pressure[up] = invalidPressure;
+				}
+			}
+			{
+				const Tile& there = getTile( candidates[down] );
+				if ( candidates[down] && !(bool)( there.wallType & WallType::WT_MOVEBLOCKING ) && !(bool)( here.floorType & FloorType::FT_SOLIDFLOOR ) )
+				{
+					pressure[down] = there.pressure + there.fluidLevel;
+				}
+				else
+				{
+					pressure[down] = invalidPressure;
 				}
 			}
 
-			// First order of sampled directions is randomized ...
-			const size_t start = seed % 4;
-			size_t minIndex    = 4;
-			for ( size_t i = 0; i < 4; ++i )
+			// Flow down if no back-pressure
+			if ( pressure[down] != invalidPressure && pressure[down] <= pressure[center] || pressure[down] < 10 )
 			{
-				const size_t j = ( i + start ) % 4;
-				if ( pressure[minIndex] > pressure[j] )
-				{
-					minIndex = j;
-				}
-			}
-			// ... and chance for flow to happen is then proportional to pressure difference
-			if ( minIndex != 4 && ( seed % 41 ) < ( pressure[4] - pressure[minIndex] ) )
-			{
-				here.flow = direction[minIndex];
+				here.flow += WF_DOWN;
 				drain.append( currentPos );
-				flood.append( candidates[minIndex] );
-				continue;
+				flood.append( neighbors.below );
+				pressure[center]--;
+				pressure[up]++;
+			}
+
+			// Decide whether to enter instable states this frame
+			// In an unstable state, distribution can reverse right in the next frame
+			// Still need to allow it occasionally to relax gradients
+			const int preventInstability = seed % 127 == 0 ? 0 : 1;
+			{
+				const bool waterAbove = pressure[up] != invalidPressure && pressure[up] != 0;
+				for ( size_t i = 0; i < 4; ++i )
+				{
+					// First order of sampled directions is randomized ...
+					const size_t j = ( i + seed ) % 4;
+					// Prevent flow to side if that would cause vacuum
+					const bool vacuum = waterAbove && pressure[center] == 10;
+					if ( pressure[j] != invalidPressure && ( pressure[center] > pressure[j] + preventInstability ) && !vacuum )
+					{
+						drain.append( currentPos );
+						flood.append( candidates[j] );
+						here.flow += direction[j];
+						pressure[center]--;
+						pressure[j]++;
+					}
+				}
 			}
 
 			// Only if nothing else worked, flow upwards
-			const Tile& upTile = getTile( neighbors.above );
-			if (
-				neighbors.above && !(bool)( upTile.floorType & FloorType::FT_SOLIDFLOOR ) && !(bool)( upTile.wallType & WallType::WT_MOVEBLOCKING ) && here.fluidLevel == 10 && here.pressure > upTile.pressure + 1 )
+			if ( pressure[up] != invalidPressure && ( pressure[center] > 10 ) && ( pressure[center] > pressure[up] + preventInstability + 1 ) )
 			{
-				here.flow = WF_UP;
+				here.flow += WF_UP;
 				drain.append( currentPos );
 				flood.append( neighbors.above );
-				continue;
+				pressure[center]--;
+				pressure[up]++;
 			}
 		}
 		else
@@ -1086,17 +1083,17 @@ void World::removeDesignation( Position pos )
 	Tile& tile = getTile( pos );
 	if ( tile.flags & TileFlag::TF_STOCKPILE )
 	{
-		Global::spm().removeTile( pos );
+		g->spm()->removeTile( pos );
 		addToUpdateList( pos );
 	}
 	else if ( tile.flags & ( TileFlag::TF_GROVE + TileFlag::TF_FARM + TileFlag::TF_PASTURE ) )
 	{
-		Global::fm().removeTile( pos, true, true, true );
+		g->fm()->removeTile( pos, true, true, true );
 		addToUpdateList( pos );
 	}
 	else if ( tile.flags & TileFlag::TF_ROOM )
 	{
-		Global::rm().removeTile( pos );
+		g->rm()->removeTile( pos );
 		addToUpdateList( pos );
 	}
 	else if ( tile.flags & TileFlag::TF_NOPASS )
@@ -1121,6 +1118,12 @@ QPair<unsigned short, unsigned short> World::mineWall( Position pos, Position& w
 		tileAbove.floorSpriteUID = 0;
 		clearTileFlag( Position( pos.aboveOf() ), TileFlag::TF_WALKABLE );
 		removeGrass( pos );
+
+		if ( m_creaturePositions.contains(  pos.aboveOf().toInt() ) )
+		{
+			g->gm()->forceMoveGnomes( pos.aboveOf(), pos );
+		}
+		g->inv()->gravity( pos.aboveOf() );
 	}
 
 	tile.wallType         = WallType::WT_NOWALL;
@@ -1141,10 +1144,8 @@ QPair<unsigned short, unsigned short> World::mineWall( Position pos, Position& w
 	discover( pos );
 
 	QString ncd = QString::number( pos.toInt() );
-	GameState::addChange2( NetworkCommand::CLEARWALLSPRITE, ncd );
 	ncd += ";";
-	ncd += Util::tile2String( tile );
-	GameState::addChange2( NetworkCommand::SETTILEFLAGS, ncd );
+	ncd += Global::util->tile2String( tile );
 
 	return { materialInt, embeddedInt };
 }
@@ -1178,10 +1179,8 @@ QPair<unsigned short, unsigned short> World::removeWall( Position pos, Position&
 	discover( pos );
 
 	QString ncd = QString::number( pos.toInt() );
-	GameState::addChange2( NetworkCommand::CLEARWALLSPRITE, ncd );
 	ncd += ";";
-	ncd += Util::tile2String( tile );
-	GameState::addChange2( NetworkCommand::SETTILEFLAGS, ncd );
+	ncd += Global::util->tile2String( tile );
 
 	return { materialInt, embeddedInt };
 }
@@ -1238,8 +1237,6 @@ void World::updateRampAtPos( Position pos )
 	Tile& tileBelow = getTile( pos.belowOf() );
 	Tile& tileAbove = getTile( pos.aboveOf() );
 
-	SpriteFactory& sf = Global::sf();
-
 	bool north = getTile( pos.northOf() ).wallType & WallType::WT_ROUGH;
 	bool south = getTile( pos.southOf() ).wallType & WallType::WT_ROUGH;
 	bool east  = getTile( pos.eastOf() ).wallType & WallType::WT_ROUGH;
@@ -1288,7 +1285,8 @@ unsigned short World::removeFloor( Position pos, Position extractTo )
 	clearTileFlag( pos, TileFlag::TF_WALKABLE );
 	m_regionMap.updatePosition( pos );
 	removeGrass( pos );
-	//Global::inv().gravity( pos );
+	removePlant( pos );
+	//g->inv()->gravity( pos );
 
 	if ( tile.flags & TileFlag::TF_SUNLIGHT )
 	{
@@ -1296,18 +1294,19 @@ unsigned short World::removeFloor( Position pos, Position extractTo )
 	}
 
 	PositionEntry pe;
-	if ( Global::inv().getObjectsAtPosition( pos, pe ) )
+	if ( g->inv()->getObjectsAtPosition( pos, pe ) )
 	{
 		for ( auto i : pe )
 		{
-			Global::inv().moveItemToPos( i, extractTo );
+			g->inv()->moveItemToPos( i, extractTo );
 		}
 	}
 
 	if ( m_creaturePositions.contains( pos.toInt() ) )
 	{
-		Global::gm().forceMoveGnomes( pos, extractTo );
+		g->gm()->forceMoveGnomes( pos, extractTo );
 	}
+	
 	discover( pos.belowOf() );
 
 	addToUpdateList( pos );
@@ -1317,7 +1316,6 @@ unsigned short World::removeFloor( Position pos, Position extractTo )
 
 void World::createRamp( int x, int y, int z, TerrainMaterial mat )
 {
-	SpriteFactory& os = Global::sf();
 	int offset        = z * m_dimX * m_dimY;
 	Tile& tileBelow   = m_world[x + y * m_dimX + ( z - 1 ) * m_dimX * m_dimY];
 	Tile& tileAbove   = m_world[x + y * m_dimX + ( z + 1 ) * m_dimX * m_dimY];
@@ -1336,7 +1334,7 @@ void World::createRamp( int x, int y, int z, TerrainMaterial mat )
 	{
 		tile.floorType      = FloorType::FT_SOLIDFLOOR;
 		tile.floorMaterial  = key;
-		tile.floorSpriteUID = os.createSprite( mat.floor, { mat.key } )->uID;
+		tile.floorSpriteUID = g->sf()->createSprite( mat.floor, { mat.key } )->uID;
 	}
 
 	bool north = m_world[x + ( y - 1 ) * m_dimX + offset].wallType & WallType::WT_ROUGH;
@@ -1366,24 +1364,28 @@ void World::createRamp( Position pos )
 
 void World::createRamp( int x, int y, int z )
 {
-	SpriteFactory& os = Global::sf();
-
 	int offset      = z * m_dimX * m_dimY;
 	Tile& tileBelow = m_world[x + y * m_dimX + ( z - 1 ) * m_dimX * m_dimY];
 	Tile& tileAbove = m_world[x + y * m_dimX + ( z + 1 ) * m_dimX * m_dimY];
 	Tile& tile      = m_world[x + y * m_dimX + offset];
 	if ( tileAbove.floorType == FloorType::FT_SOLIDFLOOR )
+	{
 		return;
+	}
 	if ( tileBelow.wallType == WallType::WT_NOWALL )
+	{
 		return;
+	}
 	if ( tile.floorType != FloorType::FT_SOLIDFLOOR )
+	{
 		return;
+	}
 	//if( tile.wallType != WallType::WT_NOWALL ) return;
 	if ( ( tileBelow.wallType & WallType::WT_ROUGH ) && ( tile.wallType == WallType::WT_NOWALL ) && ( tile.floorType == FloorType::FT_NOFLOOR ) )
 	{
 		tile.floorType      = FloorType::FT_SOLIDFLOOR;
 		tile.floorMaterial  = tileBelow.wallMaterial;
-		tile.floorSpriteUID = os.createSprite( DB::select( "FloorSprite", "TerrainMaterials", tileBelow.wallMaterial ).toString(), { DBH::materialSID( tileBelow.wallMaterial ) } )->uID;
+		tile.floorSpriteUID = g->sf()->createSprite( DB::select( "FloorSprite", "TerrainMaterials", DBH::materialSID( tileBelow.wallMaterial ) ).toString(), { DBH::materialSID( tileBelow.wallMaterial ) } )->uID;
 	}
 
 	bool north = m_world[x + ( y - 1 ) * m_dimX + offset].wallType & WallType::WT_ROUGH;
@@ -1440,7 +1442,7 @@ void World::createRamp( int x, int y, int z )
 
 	tileAbove.floorType     = FloorType::FT_RAMPTOP;
 	tileAbove.floorMaterial = key;
-
+	
 	setRampSprites( tile, tileAbove, sum, north, east, south, west, matSID );
 }
 
@@ -1451,8 +1453,6 @@ void World::createRamp( Position pos, QString materialSID )
 
 void World::createRamp( int x, int y, int z, QString materialSID )
 {
-	SpriteFactory& os = Global::sf();
-
 	int offset      = z * m_dimX * m_dimY;
 	Tile& tileBelow = m_world[x + y * m_dimX + ( z - 1 ) * m_dimX * m_dimY];
 	Tile& tileAbove = m_world[x + y * m_dimX + ( z + 1 ) * m_dimX * m_dimY];
@@ -1468,7 +1468,7 @@ void World::createRamp( int x, int y, int z, QString materialSID )
 	{
 		tile.floorType      = FloorType::FT_SOLIDFLOOR;
 		tile.floorMaterial  = tileBelow.wallMaterial;
-		tile.floorSpriteUID = os.createSprite( DB::select( "FloorSprite", "TerrainMaterials", tileBelow.wallMaterial ).toString(), { DBH::materialSID( tileBelow.wallMaterial ) } )->uID;
+		tile.floorSpriteUID = g->sf()->createSprite( DB::select( "FloorSprite", "TerrainMaterials", DBH::materialSID( tileBelow.wallMaterial ) ).toString(), { DBH::materialSID( tileBelow.wallMaterial ) } )->uID;
 	}
 
 	bool north = m_world[x + ( y - 1 ) * m_dimX + offset].wallType & WallType::WT_SOLIDWALL;
@@ -1499,23 +1499,22 @@ void World::createRamp( int x, int y, int z, QString materialSID )
 
 void World::setRampSprites( Tile& tile, Tile& tileAbove, int sum, bool north, bool east, bool south, bool west, QString materialSID )
 {
-	SpriteFactory& sf      = Global::sf();
-	unsigned int ramp      = sf.createSprite( "Ramp", { materialSID } )->uID;
-	unsigned int top       = sf.createSprite( "RampTop", { materialSID } )->uID;
-	unsigned int corner    = sf.createSprite( "CornerRamp", { materialSID } )->uID;
-	unsigned int cornerTop = sf.createSprite( "CornerRampTop", { materialSID } )->uID;
-	unsigned int uRamp     = sf.createSprite( "URamp", { materialSID } )->uID;
-	unsigned int uRampTop  = sf.createSprite( "URampTop", { materialSID } )->uID;
+	unsigned int ramp      = g->sf()->createSprite( "Ramp", { materialSID } )->uID;
+	unsigned int top       = g->sf()->createSprite( "RampTop", { materialSID } )->uID;
+	unsigned int corner    = g->sf()->createSprite( "CornerRamp", { materialSID } )->uID;
+	unsigned int cornerTop = g->sf()->createSprite( "CornerRampTop", { materialSID } )->uID;
+	unsigned int uRamp     = g->sf()->createSprite( "URamp", { materialSID } )->uID;
+	unsigned int uRampTop  = g->sf()->createSprite( "URampTop", { materialSID } )->uID;
 
 	if ( tile.flags & TileFlag::TF_GRASS )
 	{
-		tile.floorSpriteUID = sf.createSprite( "RoughFloor", { "Dirt" } )->uID;
-		ramp                = sf.createSprite( "GrassSoilRamp", { "Dirt", "Grass" } )->uID;
-		top                 = sf.createSprite( "GrassSoilRampTop", { "Dirt", "Grass" } )->uID;
-		corner              = sf.createSprite( "GrassSoilCornerRamp", { "Dirt", "Grass" } )->uID;
-		cornerTop           = sf.createSprite( "GrassSoilCornerRampTop", { "Dirt", "Grass" } )->uID;
-		uRamp               = sf.createSprite( "GrassSoilURamp", { "Dirt", "Grass" } )->uID;
-		uRampTop            = sf.createSprite( "GrassSoilURampTop", { "Dirt", "Grass" } )->uID;
+		tile.floorSpriteUID = g->sf()->createSprite( "RoughFloor", { "Dirt" } )->uID;
+		ramp                = g->sf()->createSprite( "GrassSoilRamp", { "Dirt", "Grass" } )->uID;
+		top                 = g->sf()->createSprite( "GrassSoilRampTop", { "Dirt", "Grass" } )->uID;
+		corner              = g->sf()->createSprite( "GrassSoilCornerRamp", { "Dirt", "Grass" } )->uID;
+		cornerTop           = g->sf()->createSprite( "GrassSoilCornerRampTop", { "Dirt", "Grass" } )->uID;
+		uRamp               = g->sf()->createSprite( "GrassSoilURamp", { "Dirt", "Grass" } )->uID;
+		uRampTop            = g->sf()->createSprite( "GrassSoilURampTop", { "Dirt", "Grass" } )->uID;
 		if ( tile.flags & TileFlag::TF_SUNLIGHT )
 		{
 			tileAbove.flags += TileFlag::TF_SUNLIGHT;
@@ -1524,13 +1523,13 @@ void World::setRampSprites( Tile& tile, Tile& tileAbove, int sum, bool north, bo
 
 	if ( tile.flags & TileFlag::TF_BIOME_MUSHROOM )
 	{
-		//floorSpriteUID = sf.createSprite( "RoughFloor", { "Dirt" } )->uID;
-		ramp      = sf.createSprite( "MushroomGrassSoilRamp", { "Dirt", "Grass" } )->uID;
-		top       = sf.createSprite( "MushroomGrassSoilRampTop", { "Dirt", "Grass" } )->uID;
-		corner    = sf.createSprite( "MushroomGrassSoilCornerRamp", { "Dirt", "Grass" } )->uID;
-		cornerTop = sf.createSprite( "MushroomGrassSoilCornerRampTop", { "Dirt", "Grass" } )->uID;
-		uRamp     = sf.createSprite( "MushroomGrassSoilURamp", { "Dirt", "Grass" } )->uID;
-		uRampTop  = sf.createSprite( "MushroomGrassSoilURampTop", { "Dirt", "Grass" } )->uID;
+		//floorSpriteUID = g->sf()->createSprite( "RoughFloor", { "Dirt" } )->uID;
+		ramp      = g->sf()->createSprite( "MushroomGrassSoilRamp", { "Dirt", "Grass" } )->uID;
+		top       = g->sf()->createSprite( "MushroomGrassSoilRampTop", { "Dirt", "Grass" } )->uID;
+		corner    = g->sf()->createSprite( "MushroomGrassSoilCornerRamp", { "Dirt", "Grass" } )->uID;
+		cornerTop = g->sf()->createSprite( "MushroomGrassSoilCornerRampTop", { "Dirt", "Grass" } )->uID;
+		uRamp     = g->sf()->createSprite( "MushroomGrassSoilURamp", { "Dirt", "Grass" } )->uID;
+		uRampTop  = g->sf()->createSprite( "MushroomGrassSoilURampTop", { "Dirt", "Grass" } )->uID;
 	}
 
 	if ( sum == 1 )
@@ -1635,12 +1634,12 @@ void World::createRampOuterCorners( int x, int y, int z )
 
 	QString matSID = DBH::materialSID( key );
 
-	unsigned int corner = Global::sf().createSprite( "OuterCornerRamp", { matSID } )->uID;
+	unsigned int corner = g->sf()->createSprite( "OuterCornerRamp", { matSID } )->uID;
 
 	if ( tile.flags & TileFlag::TF_GRASS )
 	{
 		matSID = "Grass";
-		corner = Global::sf().createSprite( "GrassOuterCornerRamp", { matSID } )->uID;
+		corner = g->sf()->createSprite( "GrassOuterCornerRamp", { matSID } )->uID;
 	}
 
 	tile.wallType     = ( WallType )( WallType::WT_RAMPCORNER );
@@ -1667,18 +1666,6 @@ void World::createRampOuterCorners( int x, int y, int z )
 		tile.wallSpriteUID = corner;
 		tile.wallRotation  = 2;
 	}
-}
-
-bool World::setNetworkMove( unsigned int id, Position newPos, int facing )
-{
-	/* TODO
-	if( Global::cm().animals().contains( id ) )
-	{
-		Global::cm().animals()[id].setNetworkMove( newPos, facing );
-		return true;
-	}
-	*/
-	return false;
 }
 
 void World::addToUpdateList( const unsigned int uID )
@@ -1832,13 +1819,13 @@ bool World::checkTrapGnomeFloor( Position pos, Position workPos )
 		if ( walkableNeighbors( checkPos ) == 1 )
 		{
 			// checkIf Gnome is on tile
-			if ( isWalkable( pos.eastOf() ) && Global::gm().gnomesAtPosition( pos.eastOf() ).size() > 0 )
+			if ( isWalkable( pos.eastOf() ) && g->gm()->gnomesAtPosition( pos.eastOf() ).size() > 0 )
 				return true;
-			if ( isWalkable( pos.westOf() ) && Global::gm().gnomesAtPosition( pos.eastOf() ).size() > 0 )
+			if ( isWalkable( pos.westOf() ) && g->gm()->gnomesAtPosition( pos.eastOf() ).size() > 0 )
 				return true;
-			if ( isWalkable( pos.southOf() ) && Global::gm().gnomesAtPosition( pos.eastOf() ).size() > 0 )
+			if ( isWalkable( pos.southOf() ) && g->gm()->gnomesAtPosition( pos.eastOf() ).size() > 0 )
 				return true;
-			if ( isWalkable( pos.northOf() ) && Global::gm().gnomesAtPosition( pos.eastOf() ).size() > 0 )
+			if ( isWalkable( pos.northOf() ) && g->gm()->gnomesAtPosition( pos.eastOf() ).size() > 0 )
 				return true;
 		}
 	}
@@ -1849,13 +1836,13 @@ bool World::checkTrapGnomeFloor( Position pos, Position workPos )
 		if ( walkableNeighbors( checkPos ) == 1 )
 		{
 			// checkIf Gnome is on tile
-			if ( isWalkable( pos.eastOf() ) && Global::gm().gnomesAtPosition( pos.eastOf() ).size() > 0 )
+			if ( isWalkable( pos.eastOf() ) && g->gm()->gnomesAtPosition( pos.eastOf() ).size() > 0 )
 				return true;
-			if ( isWalkable( pos.westOf() ) && Global::gm().gnomesAtPosition( pos.eastOf() ).size() > 0 )
+			if ( isWalkable( pos.westOf() ) && g->gm()->gnomesAtPosition( pos.eastOf() ).size() > 0 )
 				return true;
-			if ( isWalkable( pos.southOf() ) && Global::gm().gnomesAtPosition( pos.eastOf() ).size() > 0 )
+			if ( isWalkable( pos.southOf() ) && g->gm()->gnomesAtPosition( pos.eastOf() ).size() > 0 )
 				return true;
-			if ( isWalkable( pos.northOf() ) && Global::gm().gnomesAtPosition( pos.eastOf() ).size() > 0 )
+			if ( isWalkable( pos.northOf() ) && g->gm()->gnomesAtPosition( pos.eastOf() ).size() > 0 )
 				return true;
 		}
 	}
@@ -1866,13 +1853,13 @@ bool World::checkTrapGnomeFloor( Position pos, Position workPos )
 		if ( walkableNeighbors( checkPos ) == 1 )
 		{
 			// checkIf Gnome is on tile
-			if ( isWalkable( pos.eastOf() ) && Global::gm().gnomesAtPosition( pos.eastOf() ).size() > 0 )
+			if ( isWalkable( pos.eastOf() ) && g->gm()->gnomesAtPosition( pos.eastOf() ).size() > 0 )
 				return true;
-			if ( isWalkable( pos.westOf() ) && Global::gm().gnomesAtPosition( pos.eastOf() ).size() > 0 )
+			if ( isWalkable( pos.westOf() ) && g->gm()->gnomesAtPosition( pos.eastOf() ).size() > 0 )
 				return true;
-			if ( isWalkable( pos.southOf() ) && Global::gm().gnomesAtPosition( pos.eastOf() ).size() > 0 )
+			if ( isWalkable( pos.southOf() ) && g->gm()->gnomesAtPosition( pos.eastOf() ).size() > 0 )
 				return true;
-			if ( isWalkable( pos.northOf() ) && Global::gm().gnomesAtPosition( pos.eastOf() ).size() > 0 )
+			if ( isWalkable( pos.northOf() ) && g->gm()->gnomesAtPosition( pos.eastOf() ).size() > 0 )
 				return true;
 		}
 	}
@@ -1883,13 +1870,13 @@ bool World::checkTrapGnomeFloor( Position pos, Position workPos )
 		if ( walkableNeighbors( checkPos ) == 1 )
 		{
 			// checkIf Gnome is on tile
-			if ( isWalkable( pos.eastOf() ) && Global::gm().gnomesAtPosition( pos.eastOf() ).size() > 0 )
+			if ( isWalkable( pos.eastOf() ) && g->gm()->gnomesAtPosition( pos.eastOf() ).size() > 0 )
 				return true;
-			if ( isWalkable( pos.westOf() ) && Global::gm().gnomesAtPosition( pos.eastOf() ).size() > 0 )
+			if ( isWalkable( pos.westOf() ) && g->gm()->gnomesAtPosition( pos.eastOf() ).size() > 0 )
 				return true;
-			if ( isWalkable( pos.southOf() ) && Global::gm().gnomesAtPosition( pos.eastOf() ).size() > 0 )
+			if ( isWalkable( pos.southOf() ) && g->gm()->gnomesAtPosition( pos.eastOf() ).size() > 0 )
 				return true;
-			if ( isWalkable( pos.northOf() ) && Global::gm().gnomesAtPosition( pos.eastOf() ).size() > 0 )
+			if ( isWalkable( pos.northOf() ) && g->gm()->gnomesAtPosition( pos.eastOf() ).size() > 0 )
 				return true;
 		}
 	}

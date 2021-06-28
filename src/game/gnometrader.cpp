@@ -16,6 +16,8 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #include "gnometrader.h"
+#include "gnomemanager.h"
+#include "game.h"
 
 #include "../base/behaviortree/bt_tree.h"
 #include "../base/config.h"
@@ -33,10 +35,9 @@ TraderDefinition::TraderDefinition( QVariantMap& in )
 	id = in.value( "ID" ).toString();
 
 	auto vItems = in.value( "Items" ).toList();
-	for( auto vItem : vItems )
+	for( const auto& vItem : vItems )
 	{
 		auto vin = vItem.toMap();
-		Gender gender = ( vin.value( "Gender" ).toString() == "Male" ) ? Gender::MALE : Gender::FEMALE;
 		int amount = 1;
 		if( vin.contains( "Amount" ) )
 		{
@@ -46,7 +47,8 @@ TraderDefinition::TraderDefinition( QVariantMap& in )
 		TraderItem ti{	vin.value( "Type" ).toString(), 
 						vin.value( "Item" ).toString(), 
 						vin.value( "Material" ).toString(), 
-						gender, vin.value( "Quality" ).value<unsigned char>(), 
+						vin.value( "Gender" ).toString(), 
+						vin.value( "Quality" ).value<unsigned char>(), 
 						vin.value( "Value_").toInt(), 
 						amount,
 						vin.value( "Reserved" ).toInt() };
@@ -61,14 +63,13 @@ void TraderDefinition::serialize( QVariantMap& out )
 
 	tdOut.insert( "ID", id );
 	QVariantList outItems;
-	for( auto item : items )
+	for( const auto& item : items )
 	{
 		QVariantMap vItem;
 		vItem.insert( "Type", item.type );
 		vItem.insert( "Item", item.itemSID );
 		vItem.insert( "Material", item.materialSID );
-		QString gender = item.gender == Gender::MALE ? "Male" : "Female";
-		vItem.insert( "Gender", gender );
+		vItem.insert( "Gender", item.gender );
 		vItem.insert( "Quality", item.quality );
 		vItem.insert( "Value_", item.value );
 		vItem.insert( "Amount", item.amount );
@@ -84,16 +85,16 @@ void TraderDefinition::serialize( QVariantMap& out )
 
 
 
-GnomeTrader::GnomeTrader( Position& pos, QString name, Gender gender ) :
-	Gnome( pos, name, gender )
+GnomeTrader::GnomeTrader( Position& pos, QString name, Gender gender, Game* game ) :
+	Gnome( pos, name, gender, game )
 {
 	m_type = CreatureType::GNOME_TRADER;
 
-	m_leavesOnTick = GameState::tick + Util::ticksPerDayRandomized( 5 );
+	m_leavesOnTick = GameState::tick + Global::util->ticksPerDayRandomized( 5 );
 }
 
-GnomeTrader::GnomeTrader( QVariantMap& in ) :
-	Gnome( in ),
+GnomeTrader::GnomeTrader( QVariantMap& in, Game* game ) :
+	Gnome( in, game ),
 	m_leavesOnTick( in.value( "LeavesOnTick" ).value<quint64>() ),
 	m_marketStall( in.value( "MarketStall" ).toUInt() )
 {
@@ -114,7 +115,7 @@ void GnomeTrader::serialize( QVariantMap& out )
 
 void GnomeTrader::init()
 {
-	Global::w().insertCreatureAtPosition( m_position, m_id );
+	g->w()->insertCreatureAtPosition( m_position, m_id );
 
 	updateSprite();
 
@@ -151,7 +152,7 @@ CreatureTickResult GnomeTrader::onTick( quint64 tickNumber, bool seasonChanged, 
 		return CreatureTickResult::NOFLOOR;
 	}
 
-	if ( m_isDead )
+	if ( isDead() )
 	{
 		m_lastOnTick = tickNumber;
 		return CreatureTickResult::DEAD;
@@ -195,7 +196,7 @@ BT_RESULT GnomeTrader::conditionIsTimeToLeave( bool halt )
 	{
 		log( "It's time to leave" );
 
-		auto ws = Global::wsm().workshop( m_marketStall );
+		auto ws = g->wsm()->workshop( m_marketStall );
 		ws->assignGnome( 0 );
 
 		return BT_RESULT::SUCCESS;
@@ -206,7 +207,7 @@ BT_RESULT GnomeTrader::conditionIsTimeToLeave( bool halt )
 BT_RESULT GnomeTrader::actionGetMarketStallPosition( bool halt )
 {
 	Q_UNUSED( halt ); // action takes only one tick, halt has no effect
-	auto ws = Global::wsm().workshop( m_marketStall );
+	auto ws = g->wsm()->workshop( m_marketStall );
 	setCurrentTarget( ws->inputPos() );
 	m_facingAfterMove = ws->rotation();
 	return BT_RESULT::SUCCESS;
@@ -244,8 +245,13 @@ void GnomeTrader::setInventory( QVariantList items )
 
 		if ( amount > 0 )
 		{
-			Gender gender = ( entry.value( "Gender" ).toString() == "Male" ) ? Gender::MALE : Gender::FEMALE;
-			TraderItem ti{ entry.value( "Type" ).toString(), entry.value( "Item" ).toString(), entry.value( "Material" ).toString(), gender, entry.value( "Quality" ).value<unsigned char>(), entry.value( "Value_").toInt(), amount, 0 };
+			TraderItem ti{  entry.value( "Type" ).toString(), 
+						    entry.value( "Item" ).toString(), 
+						    entry.value( "Material" ).toString(), 
+							entry.value( "Gender" ).toString(), 
+							entry.value( "Quality" ).value<unsigned char>(), 
+							entry.value( "Value_").toInt(), 
+							amount, 0 };
 			
 			m_traderDefinition.items.append( ti );
 		}
